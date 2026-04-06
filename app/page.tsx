@@ -4,7 +4,6 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Environment } from '@react-three/drei';
 import { Box, CheckSquare, Square } from 'lucide-react';
 import * as THREE from 'three';
-import * as THREE from 'three';
 // @ts-ignore
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter';
 
