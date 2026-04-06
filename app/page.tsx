@@ -2,7 +2,7 @@
 import React, { useState, Suspense, useRef, useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Environment } from '@react-three/drei';
-import { Box, CheckSquare, Square } from 'lucide-react';
+import { Box, CheckSquare, Square, RefreshCcw } from 'lucide-react';
 import * as THREE from 'three';
 // @ts-ignore
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter';
@@ -89,7 +89,7 @@ function OrganizerModel({ cols, rows, cellW, cellL, depth, wall, backWall, radiu
 function VaseModel({ height, rBase, rMid, rTop, midPos, twist, segments, shapeType, color, vWall, vBottom }: any) {
   const geometry = useMemo(() => {
     const points = [];
-    const segmentsProf = 60;
+    const segmentsProf = 80; // Збільшив для гладкості
     
     for (let i = 0; i <= segmentsProf; i++) {
       const t = i / segmentsProf;
@@ -114,10 +114,13 @@ function VaseModel({ height, rBase, rMid, rTop, midPos, twist, segments, shapeTy
       const dist = Math.sqrt(x*x + z*z);
       const angle = Math.atan2(z, x);
       
-      if (y > 0.1 && dist > 1) {
+      if (y > 0.5 && dist > 2) {
         let mod = 1;
-        if (shapeType === 'star') mod = 1 + Math.abs(Math.cos(angle * (segments / 2))) * 0.3;
-        else if (shapeType === 'wave') mod = 1 + Math.sin(angle * segments) * 0.1;
+        // Покращений режим Wave для ребер як на фото
+        if (shapeType === 'star') mod = 1 + Math.abs(Math.cos(angle * (segments / 2))) * 0.2;
+        else if (shapeType === 'wave') mod = 1 + Math.sin(angle * segments) * 0.15;
+        
+        // Twist тепер працює плавно від низу до верху
         const currentTwist = (y / height) * twist;
         pos.setXYZ(i, Math.cos(angle + currentTwist) * dist * mod, y, Math.sin(angle + currentTwist) * dist * mod);
       } else if (y < 0.1) pos.setY(i, 0);
@@ -128,15 +131,15 @@ function VaseModel({ height, rBase, rMid, rTop, midPos, twist, segments, shapeTy
 
   return (
     <mesh geometry={geometry} castShadow receiveShadow>
-      <meshStandardMaterial color={color} side={THREE.DoubleSide} roughness={0.3} metalness={0.1} />
+      <meshStandardMaterial color={color} side={THREE.DoubleSide} roughness={0.4} metalness={0.1} />
     </mesh>
   );
 }
 
 export default function Home() {
   const groupRef = useRef<THREE.Group>(null);
-  const [tab, setTab] = useState('organizer');
-  const [mainColor, setMainColor] = useState('#475569');
+  const [tab, setTab] = useState('vases'); // По замовчуванню вази
+  const [mainColor, setMainColor] = useState('#7c2d12'); // Теракотовий як на фото
 
   const [cols, setCols] = useState(4);
   const [rows, setRows] = useState(2);
@@ -148,16 +151,16 @@ export default function Home() {
   const [radius, setRadius] = useState(8);
   const [hasBottom, setHasBottom] = useState(true);
 
-  const [vH, setVH] = useState(160);
-  const [vRB, setVRB] = useState(40);
-  const [vRM, setVRM] = useState(70);
-  const [vRT, setVRT] = useState(35);
+  const [vH, setVH] = useState(220);
+  const [vRB, setVRB] = useState(60);
+  const [vRM, setVRM] = useState(40);
+  const [vRT, setVRT] = useState(65);
   const [vMP, setVMP] = useState(0.5); 
-  const [vTwist, setVTwist] = useState(1.5);
-  const [vSeg, setVSeg] = useState(10);
-  const [vType, setVType] = useState('star');
-  const [vWall, setVWall] = useState(3);
-  const [vBottom, setVBottom] = useState(10);
+  const [vTwist, setVTwist] = useState(2);
+  const [vSeg, setVSeg] = useState(16);
+  const [vType, setVType] = useState('wave');
+  const [vWall, setVWall] = useState(1.2);
+  const [vBottom, setVBottom] = useState(3);
 
   const exportSTL = () => {
     if (!groupRef.current) return;
@@ -167,6 +170,13 @@ export default function Home() {
     link.href = URL.createObjectURL(new Blob([result], { type: 'application/octet-stream' }));
     link.download = `Dryguny_${tab}.stl`;
     link.click();
+  };
+
+  const randomizeVase = () => {
+    setVTwist((Math.random() - 0.5) * 10);
+    setVSeg(Math.floor(Math.random() * 20) + 8);
+    setVMP(Math.random() * 0.6 + 0.2);
+    setVRM(Math.random() * 80 + 20);
   };
 
   return (
@@ -183,10 +193,10 @@ export default function Home() {
       <div className="flex flex-1 gap-8 min-h-0">
         <div className="flex-[3] border-2 border-black bg-slate-50 relative">
           <Canvas shadows>
-            <PerspectiveCamera makeDefault position={[180, 180, 180]} />
-            <OrbitControls />
-            <ambientLight intensity={0.6} />
-            <pointLight position={[100, 200, 100]} castShadow intensity={1} />
+            <PerspectiveCamera makeDefault position={[250, 250, 250]} />
+            <OrbitControls autoRotate={tab === 'vases'} autoRotateSpeed={0.5} />
+            <ambientLight intensity={0.7} />
+            <pointLight position={[100, 200, 100]} castShadow intensity={1.5} />
             <Suspense fallback={null}>
               <group ref={groupRef}>
                 {tab === 'organizer' ? (
@@ -195,9 +205,14 @@ export default function Home() {
                   <VaseModel height={vH} rBase={vRB} rMid={vRM} rTop={vRT} midPos={vMP} twist={vTwist} segments={vSeg} shapeType={vType} color={mainColor} vWall={vWall} vBottom={vBottom} />
                 )}
               </group>
-              <Environment preset="studio" />
+              <Environment preset="apartment" />
             </Suspense>
           </Canvas>
+          {tab === 'vases' && (
+             <button onClick={randomizeVase} className="absolute bottom-4 right-4 bg-white border-2 border-black p-3 hover:bg-black hover:text-white transition-all shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                <RefreshCcw size={20} />
+             </button>
+          )}
         </div>
 
         <aside className="w-[360px] overflow-y-auto border-2 border-black p-5 bg-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
@@ -243,15 +258,15 @@ export default function Home() {
                   ))}
                 </div>
                 {[
-                  {l:'Vase Wall', v:vWall, s:setVWall, m:0.8, x:15, st:0.1},
-                  {l:'Solid Bottom', v:vBottom, s:setVBottom, m:2, x:60},
+                  {l:'Vase Wall (Shell)', v:vWall, s:setVWall, m:0.4, x:5, st:0.1},
+                  {l:'Solid Bottom', v:vBottom, s:setVBottom, m:1, x:40},
                   {l:'Height', v:vH, s:setVH, m:40, x:400},
                   {l:'Mid Point Pos', v:vMP, s:setVMP, m:0.05, x:0.95, st:0.01}, 
-                  {l:'Base R', v:vRB, s:setVRB, m:5, x:150},
-                  {l:'Mid R', v:vRM, s:setVRM, m:5, x:150},
-                  {l:'Top R', v:vRT, s:setVRT, m:5, x:150},
-                  {l:'Twist', v:vTwist, s:setVTwist, m:-10, x:10, st:0.1},
-                  {l:'Segments', v:vSeg, s:setVSeg, m:3, x:64}
+                  {l:'Base Radius', v:vRB, s:setVRB, m:5, x:150},
+                  {l:'Mid Radius', v:vRM, s:setVRM, m:5, x:150},
+                  {l:'Top Radius', v:vRT, s:setVRT, m:5, x:150},
+                  {l:'Twist (Left/Right)', v:vTwist, s:setVTwist, m:-10, x:10, st:0.1},
+                  {l:'Vertical Ribs', v:vSeg, s:setVSeg, m:3, x:80}
                 ].map(p => (
                   <div key={p.l}>
                     <label className="flex justify-between font-bold"><span>{p.l}</span><span>{p.v}</span></label>
@@ -261,7 +276,7 @@ export default function Home() {
               </>
             )}
             <div className="pt-4 border-t-2 border-black">
-              <label className="font-bold block mb-2">Color Picker</label>
+              <label className="font-bold block mb-2">Plastic Color</label>
               <input type="color" value={mainColor} onChange={e => setMainColor(e.target.value)} className="w-full h-8 border-2 border-black cursor-pointer" />
             </div>
           </div>
