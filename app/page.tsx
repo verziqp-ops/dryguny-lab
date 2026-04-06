@@ -4,7 +4,9 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Environment } from '@react-three/drei';
 import { Box, CheckSquare, Square } from 'lucide-react';
 import * as THREE from 'three';
-import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
+import * as THREE from 'three';
+// @ts-ignore
+import { STLExporter } from 'three/examples/jsm/exporters/STLExporter';
 
 // --- ГЕОМЕТРІЯ ОРГАНАЙЗЕРА ---
 function OrganizerModel({ cols, rows, cellW, cellL, depth, wall, backWall, radius, color, hasBottom }: any) {
