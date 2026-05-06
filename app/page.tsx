@@ -5,8 +5,40 @@ import {
   Trash2, Save, FolderOpen, ChevronDown, Check
 } from 'lucide-react';
 
+// Types
+interface Printer {
+  id: number;
+  name: string;
+  power: number;
+  wear: number;
+  active: boolean;
+}
+
+interface PrinterPreset {
+  name: string;
+  power: number;
+  wear: number;
+}
+
+interface NewPrinterForm {
+  preset: string;
+  name: string;
+  power: number;
+  wear: number;
+}
+
+interface Calculations {
+  resources: string;
+  beforeDefect: string;
+  defectCost: string;
+  totalCost: string;
+  clientPrice: string;
+}
+
+type TabType = 'cost' | 'price' | 'file';
+
 // Список принтерів з актуальними цінами для України
-const PRINTER_PRESETS = [
+const PRINTER_PRESETS: PrinterPreset[] = [
   { name: "Anycubic Kobra 3 / S1 Combo", power: 100, wear: 15 },
   { name: "Bambu Lab P2S", power: 110, wear: 20 },
   { name: "Bambu Lab P1P / P1S", power: 110, wear: 25 },
@@ -25,17 +57,17 @@ const PRINTER_PRESETS = [
 ];
 
 export default function Calculator3D() {
-  const [activeTab, setActiveTab] = useState('cost'); // cost, price, file
-  const [showPrinterModal, setShowPrinterModal] = useState(false);
-  const [projectMode, setProjectMode] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabType>('cost');
+  const [showPrinterModal, setShowPrinterModal] = useState<boolean>(false);
+  const [projectMode, setProjectMode] = useState<boolean>(false);
   
   // Printer state
-  const [printers, setPrinters] = useState([
+  const [printers, setPrinters] = useState<Printer[]>([
     { id: 1, name: "Bambu Lab A1", power: 95, wear: 15, active: true }
   ]);
   
   // New printer form
-  const [newPrinter, setNewPrinter] = useState({
+  const [newPrinter, setNewPrinter] = useState<NewPrinterForm>({
     preset: "",
     name: "Мій принтер",
     power: 100,
@@ -43,22 +75,22 @@ export default function Calculator3D() {
   });
 
   // Calculator inputs
-  const [weight, setWeight] = useState(0);
-  const [plasticPrice, setPlasticPrice] = useState(0);
-  const [isAMS, setIsAMS] = useState(false);
-  const [colorCount, setColorCount] = useState(2);
-  const [colorChanges, setColorChanges] = useState(0);
-  const [flushPerChange, setFlushPerChange] = useState(0.6);
-  const [wasteWeight, setWasteWeight] = useState(0);
-  const [primeWeight, setPrimeWeight] = useState(0);
-  const [printTime, setPrintTime] = useState(0);
-  const [electricityRate, setElectricityRate] = useState(4.32);
-  const [packaging, setPackaging] = useState(0);
-  const [defectRate, setDefectRate] = useState(0);
-  const [markup, setMarkup] = useState(0);
+  const [weight, setWeight] = useState<number>(0);
+  const [plasticPrice, setPlasticPrice] = useState<number>(0);
+  const [isAMS, setIsAMS] = useState<boolean>(false);
+  const [colorCount, setColorCount] = useState<number>(2);
+  const [colorChanges, setColorChanges] = useState<number>(0);
+  const [flushPerChange, setFlushPerChange] = useState<number>(0.6);
+  const [wasteWeight, setWasteWeight] = useState<number>(0);
+  const [primeWeight, setPrimeWeight] = useState<number>(0);
+  const [printTime, setPrintTime] = useState<number>(0);
+  const [electricityRate, setElectricityRate] = useState<number>(4.32);
+  const [packaging, setPackaging] = useState<number>(0);
+  const [defectRate, setDefectRate] = useState<number>(0);
+  const [markup, setMarkup] = useState<number>(0);
 
   // Розрахунки
-  const calculations = useMemo(() => {
+  const calculations = useMemo<Calculations>(() => {
     const activePrinter = printers.find(p => p.active);
     
     // Вартість матеріалу
@@ -110,10 +142,10 @@ export default function Calculator3D() {
     }
   }, [isAMS, colorChanges, flushPerChange]);
 
-  const addPrinter = () => {
+  const addPrinter = (): void => {
     const selectedPreset = PRINTER_PRESETS.find(p => p.name === newPrinter.preset);
     
-    const printer = {
+    const printer: Printer = {
       id: Date.now(),
       name: newPrinter.name,
       power: selectedPreset ? selectedPreset.power : newPrinter.power,
@@ -126,18 +158,18 @@ export default function Calculator3D() {
     setNewPrinter({ preset: "", name: "Мій принтер", power: 100, wear: 15 });
   };
 
-  const togglePrinter = (id) => {
+  const togglePrinter = (id: number): void => {
     setPrinters(printers.map(p => ({
       ...p,
       active: p.id === id
     })));
   };
 
-  const deletePrinter = (id) => {
+  const deletePrinter = (id: number): void => {
     setPrinters(printers.filter(p => p.id !== id));
   };
 
-  const resetAll = () => {
+  const resetAll = (): void => {
     setWeight(0);
     setPlasticPrice(0);
     setIsAMS(false);
