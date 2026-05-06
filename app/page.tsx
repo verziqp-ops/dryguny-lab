@@ -1,20 +1,14 @@
 "use client";
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
-  Search, Calculator, ChevronRight, Heart, 
-  Settings, Plus, Zap, Box, Clock, Trash2, Save, X
+  Calculator, Settings, Plus, Box, Clock, X, Sun, Moon, FileText, Tag, MousePointer2
 } from 'lucide-react';
 
-// Стилі Neumorphism
-const neuOutset = "bg-[#ebf0f7] shadow-[6px_6px_12px_#ced4da,-6px_-6px_12px_#ffffff]";
-const neuInset = "bg-[#ebf0f7] shadow-[inset_4px_4px_8px_#ced4da,inset_-4px_-4px_8px_#ffffff]";
-const neuButton = "active:shadow-[inset_2px_2px_5px_#ced4da,inset_-2px_-2px_5px_#ffffff] transition-all";
-
 export default function DrygunyApp() {
-  const [view, setView] = useState('main'); // 'main' або 'calc'
-  const [calcTab, setCalcTab] = useState('cost'); // 'cost', 'price', 'file'
-  const [currency, setCurrency] = useState('₴');
-
+  const [view, setView] = useState('main'); 
+  const [calcTab, setCalcTab] = useState('cost');
+  const [isDark, setIsDark] = useState(false);
+  
   // Дані калькулятора
   const [weight, setWeight] = useState(0);
   const [plasticPrice, setPlasticPrice] = useState(0);
@@ -25,11 +19,23 @@ export default function DrygunyApp() {
   const [elecPrice, setElecPrice] = useState(4.32);
   const [markup, setMarkup] = useState(0);
 
-  // Розрахунок
+  // Кольори для режимів
+  const theme = {
+    bg: isDark ? "bg-[#1e2124]" : "bg-[#ebf0f7]",
+    text: isDark ? "text-slate-200" : "text-slate-700",
+    label: isDark ? "text-slate-500" : "text-slate-400",
+    neuOutset: isDark 
+      ? "bg-[#1e2124] shadow-[6px_6px_12px_#131517,-6px_-6px_12px_#292d31]" 
+      : "bg-[#ebf0f7] shadow-[6px_6px_12px_#ced4da,-6px_-6px_12px_#ffffff]",
+    neuInset: isDark
+      ? "bg-[#1e2124] shadow-[inset_4px_4px_8px_#131517,inset_-4px_-4px_8px_#292d31]"
+      : "bg-[#ebf0f7] shadow-[inset_4px_4px_8px_#ced4da,inset_-4px_-4px_8px_#ffffff]",
+  };
+
   const results = useMemo(() => {
     const pCost = (weight / 1000) * plasticPrice;
     const amsCost = isAMS ? ((switches * flush) / 1000) * plasticPrice : 0;
-    const eCost = (printTime * 0.1) * elecPrice; // 100Вт = 0.1кВт
+    const eCost = (printTime * 0.1) * elecPrice;
     const total = pCost + amsCost + eCost;
     const finalPrice = total + (total * (markup / 100));
     return { total: total.toFixed(2), finalPrice: finalPrice.toFixed(2) };
@@ -37,41 +43,20 @@ export default function DrygunyApp() {
 
   if (view === 'main') {
     return (
-      <div className="min-h-screen bg-[#ebf0f7] p-8 text-slate-700">
+      <div className={`min-h-screen ${theme.bg} ${theme.text} p-8 transition-colors duration-300`}>
         <div className="max-w-6xl mx-auto">
-          <header className="mb-16 flex justify-between items-start">
-            <div>
-              <h1 className="text-5xl font-black text-slate-800 mb-4">Утиліти для <span className="text-blue-600">3D-печатників</span></h1>
-              <p className="text-slate-400 font-bold max-w-lg">Аналіз STL, генератори моделей, калькулятори. Все безкоштовно та локально.</p>
-            </div>
-            <div className={`${neuOutset} p-6 rounded-3xl flex items-center gap-4`}>
-              <div className={`${neuInset} p-3 rounded-xl text-blue-600`}><Calculator size={24}/></div>
-              <div className="text-xs font-black uppercase tracking-tighter">Локально в браузері</div>
-            </div>
+          <header className="mb-16 flex justify-between items-center">
+            <h1 className="text-4xl font-black tracking-tighter uppercase">Dryguny <span className="text-blue-600">Lab</span></h1>
+            <button onClick={() => setIsDark(!isDark)} className={`${theme.neuOutset} p-4 rounded-2xl`}>
+              {isDark ? <Sun className="text-yellow-400" /> : <Moon className="text-blue-600" />}
+            </button>
           </header>
 
-          <div className={`${neuInset} w-full max-w-xl flex items-center px-6 py-4 rounded-full mb-12`}>
-            <Search size={20} className="text-slate-300 mr-3" />
-            <input placeholder="Знайти утиліту..." className="bg-transparent border-none outline-none w-full font-bold" />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div 
-              onClick={() => setView('calc')}
-              className={`${neuOutset} p-8 rounded-[2.5rem] cursor-pointer hover:scale-[1.02] transition-all group`}
-            >
-              <div className="flex justify-between mb-6">
-                <div className={`${neuInset} p-3 rounded-xl text-blue-500`}><Calculator size={20}/></div>
-                <div className="bg-white/50 px-3 py-1 rounded-full text-[10px] font-black text-green-500 uppercase flex items-center gap-1">
-                  <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" /> Готово
-                </div>
-              </div>
-              <h3 className="text-xl font-black mb-2">Калькулятор собівартості</h3>
-              <p className="text-sm text-slate-400 font-medium mb-8">Рахує ціну пластику, AMS та електрику.</p>
-              <div className="flex justify-between items-center text-blue-600 font-black text-sm">
-                <span>БІЗНЕС</span>
-                <div className="flex items-center gap-1 group-hover:gap-3 transition-all">Відкрити <ChevronRight size={16}/></div>
-              </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+            <div onClick={() => setView('calc')} className={`${theme.neuOutset} p-10 rounded-[3rem] cursor-pointer hover:scale-[1.02] transition-all`}>
+              <Calculator size={40} className="text-blue-600 mb-6" />
+              <h2 className="text-2xl font-black mb-2 uppercase">Калькулятор собівартості</h2>
+              <p className={`${theme.label} font-bold`}>Точний розрахунок пластику, AMS та амортизації принтера.</p>
             </div>
           </div>
         </div>
@@ -80,122 +65,144 @@ export default function DrygunyApp() {
   }
 
   return (
-    <div className="min-h-screen bg-[#ebf0f7] p-6 text-slate-700">
-      <div className="max-w-2xl mx-auto">
-        {/* Header Калькулятора */}
-        <div className="flex justify-between items-center mb-8">
-          <button onClick={() => setView('main')} className="p-3 rounded-full text-slate-400 hover:text-blue-600"><X size={24}/></button>
-          <div className="flex gap-2">
-            {['₴', '$', '€'].map(c => (
-              <button key={c} onClick={() => setCurrency(c)} className={`${currency === c ? neuInset : neuOutset} w-10 h-10 rounded-full font-black text-xs transition-all`}>{c}</button>
-            ))}
-          </div>
-          <div className={`${neuOutset} p-1 rounded-full flex gap-1`}>
-            {['cost', 'price', 'file'].map(t => (
+    <div className={`min-h-screen ${theme.bg} ${theme.text} p-4 md:p-10 transition-colors duration-300`}>
+      <div className="max-w-3xl mx-auto">
+        {/* Navigation */}
+        <div className="flex flex-wrap gap-4 justify-between items-center mb-10">
+          <button onClick={() => setView('main')} className={`${theme.neuOutset} p-4 rounded-2xl`}><X/></button>
+          
+          <div className={`${theme.neuOutset} p-2 rounded-full flex gap-1`}>
+            {[
+              { id: 'cost', label: 'Собівартість', icon: <Box size={14}/> },
+              { id: 'price', label: 'Ціна', icon: <Tag size={14}/> },
+              { id: 'file', label: 'Файл', icon: <FileText size={14}/> }
+            ].map(t => (
               <button 
-                key={t}
-                onClick={() => setCalcTab(t)}
-                className={`px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${calcTab === t ? 'bg-blue-600 text-white shadow-inner' : 'text-slate-400'}`}
+                key={t.id}
+                onClick={() => setCalcTab(t.id)}
+                className={`px-6 py-3 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all ${calcTab === t.id ? 'bg-blue-600 text-white' : theme.label}`}
               >
-                {t === 'cost' ? 'Собівартість' : t === 'price' ? 'Ціна' : 'Файл'}
+                {t.icon} {t.label}
               </button>
             ))}
           </div>
+          <button onClick={() => setIsDark(!isDark)} className={`${theme.neuOutset} p-4 rounded-2xl`}>
+            {isDark ? <Sun size={20}/> : <Moon size={20}/>}
+          </button>
         </div>
 
-        <h2 className="text-2xl font-black text-center mb-8 uppercase tracking-tighter">Калькулятор собівартості 3D-печаті</h2>
-
         {calcTab === 'cost' && (
-          <div className="space-y-6">
-            {/* Принтер */}
-            <div className={`${neuOutset} p-6 rounded-[2rem]`}>
-              <div className="flex justify-between items-center mb-4 text-[10px] font-black text-slate-400 tracking-widest uppercase">
-                <div className="flex items-center gap-2">Мої принтери</div>
-                <div>0 активних</div>
+          <div className="space-y-8 animate-in fade-in duration-500">
+            {/* My Printers Section */}
+            <div className={`${theme.neuOutset} p-8 rounded-[2.5rem]`}>
+              <div className="flex justify-between text-[10px] font-black uppercase tracking-[0.2em] mb-6 opacity-50">
+                <span>Мої принтери</span>
+                <span>1 активний</span>
               </div>
-              <div className={`${neuInset} p-4 rounded-2xl flex justify-between items-center opacity-60`}>
-                <div>
-                  <div className="font-black text-sm">Bambu Lab A1</div>
-                  <div className="text-[10px] font-bold">95 Вт · 25 {currency}/ч</div>
+              <div className={`${theme.neuInset} p-5 rounded-2xl flex justify-between items-center`}>
+                <div className="flex items-center gap-4">
+                  <div className="w-3 h-3 bg-green-500 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)]" />
+                  <div>
+                    <div className="font-black text-sm">Bambu Lab A1</div>
+                    <div className="text-[10px] font-bold opacity-50">95 Вт · 25 ₴/год</div>
+                  </div>
                 </div>
-                <Settings size={16} className="text-slate-400" />
+                <Settings size={18} className="opacity-30" />
               </div>
-              <button className="w-full mt-4 py-3 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 text-xs font-black uppercase tracking-widest hover:bg-white/20 transition-all">
+              <button className="w-full mt-6 py-4 rounded-2xl border-2 border-dashed border-slate-300 dark:border-slate-700 text-[10px] font-black uppercase tracking-widest opacity-40 hover:opacity-100 transition-all">
                 + Додати свій принтер
               </button>
             </div>
 
-            {/* Матеріал */}
-            <div className={`${neuOutset} p-8 rounded-[2rem] space-y-6`}>
+            {/* Material Inputs */}
+            <div className={`${theme.neuOutset} p-8 rounded-[2.5rem] space-y-8`}>
               <div className="flex justify-between items-center">
-                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><Box size={14}/> Матеріал</div>
-                <div onClick={() => setIsAMS(!isAMS)} className={`w-12 h-6 rounded-full relative cursor-pointer transition-all ${isAMS ? 'bg-blue-500' : 'bg-slate-300'}`}>
-                  <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${isAMS ? 'left-7' : 'left-1'}`} />
+                <span className="text-[10px] font-black uppercase tracking-widest opacity-50">Матеріал</span>
+                <div onClick={() => setIsAMS(!isAMS)} className={`w-14 h-7 rounded-full p-1 cursor-pointer transition-all ${isAMS ? 'bg-blue-600' : 'bg-slate-300 dark:bg-slate-700'}`}>
+                  <div className={`w-5 h-5 bg-white rounded-full transition-all ${isAMS ? 'translate-x-7' : 'translate-x-0'}`} />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-6">
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div>
-                  <label className="text-[10px] font-black text-slate-400 ml-2">ВЕС ИЗДЕЛИЯ (Г)</label>
-                  <input type="number" value={weight} onChange={e=>setWeight(+e.target.value)} className={`${neuInset} w-full p-4 rounded-2xl border-none outline-none font-black text-blue-600 mt-1`} />
+                  <label className="text-[10px] font-black opacity-50 ml-2 block mb-2 uppercase">Вага виробу (г)</label>
+                  <input type="number" value={weight} onChange={e=>setWeight(+e.target.value)} className={`${theme.neuInset} w-full p-5 rounded-2xl outline-none font-black text-blue-600 bg-transparent`} />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black text-slate-400 ml-2">ЦЕНА ПЛАСТИКА (/КГ)</label>
-                  <input type="number" value={plasticPrice} onChange={e=>setPlasticPrice(+e.target.value)} className={`${neuInset} w-full p-4 rounded-2xl border-none outline-none font-black text-blue-600 mt-1`} />
+                  <label className="text-[10px] font-black opacity-50 ml-2 block mb-2 uppercase">Ціна пластику (₴/кг)</label>
+                  <input type="number" value={plasticPrice} onChange={e=>setPlasticPrice(+e.target.value)} className={`${theme.neuInset} w-full p-5 rounded-2xl outline-none font-black text-blue-600 bg-transparent`} />
                 </div>
               </div>
             </div>
 
-            {/* Блок AMS */}
             {isAMS && (
-              <div className={`${neuOutset} p-8 rounded-[2rem] space-y-6 animate-in slide-in-from-top-2`}>
-                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Мультицвєт / AMS</div>
-                <div className="grid grid-cols-2 gap-6">
+              <div className={`${theme.neuOutset} p-8 rounded-[2.5rem] space-y-8 animate-in slide-in-from-top-4`}>
+                <span className="text-[10px] font-black uppercase tracking-widest opacity-50">Багатоколірна печать (AMS)</span>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                   <div>
-                    <label className="text-[10px] font-black text-slate-400">КІЛЬКІСТЬ КОЛЬОРІВ</label>
-                    <input type="number" value={switches} onChange={e=>setSwitches(+e.target.value)} className={`${neuInset} w-full p-4 rounded-2xl border-none outline-none font-black text-blue-600 mt-1`} />
+                    <label className="text-[10px] font-black opacity-50 ml-2 block mb-2 uppercase">Кількість кольорів</label>
+                    <input type="number" value={switches} onChange={e=>setSwitches(+e.target.value)} className={`${theme.neuInset} w-full p-5 rounded-2xl outline-none font-black text-blue-600 bg-transparent`} />
                   </div>
                   <div>
-                    <label className="text-[10px] font-black text-slate-400">ЗЛИВ (Г/ЗМІНА)</label>
-                    <input type="number" value={flush} onChange={e=>setFlush(+e.target.value)} className={`${neuInset} w-full p-4 rounded-2xl border-none outline-none font-black text-blue-600 mt-1`} />
+                    <label className="text-[10px] font-black opacity-50 ml-2 block mb-2 uppercase">Злив на 1 зміну (г)</label>
+                    <input type="number" value={flush} onChange={e=>setFlush(+e.target.value)} className={`${theme.neuInset} w-full p-5 rounded-2xl outline-none font-black text-blue-600 bg-transparent`} />
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Час + Енергія */}
-            <div className={`${neuOutset} p-8 rounded-[2rem] space-y-6`}>
-              <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><Clock size={14}/> Время + энергия</div>
-              <div className="grid grid-cols-2 gap-6">
+            {/* Energy */}
+            <div className={`${theme.neuOutset} p-8 rounded-[2.5rem] space-y-8`}>
+              <span className="text-[10px] font-black uppercase tracking-widest opacity-50">Час та енергія</span>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div>
-                  <label className="text-[10px] font-black text-slate-400">ВРЕМЯ ПЕЧАТИ (Ч)</label>
-                  <input type="number" value={printTime} onChange={e=>setPrintTime(+e.target.value)} className={`${neuInset} w-full p-4 rounded-2xl border-none outline-none font-black text-blue-600 mt-1`} />
+                  <label className="text-[10px] font-black opacity-50 ml-2 block mb-2 uppercase">Час друку (год)</label>
+                  <input type="number" value={printTime} onChange={e=>setPrintTime(+e.target.value)} className={`${theme.neuInset} w-full p-5 rounded-2xl outline-none font-black text-blue-600 bg-transparent`} />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black text-slate-400">ТАРИФ ЭЛЕКТРИЧЕСТВА</label>
-                  <input type="number" value={elecPrice} onChange={e=>setElecPrice(+e.target.value)} className={`${neuInset} w-full p-4 rounded-2xl border-none outline-none font-black text-blue-600 mt-1`} />
+                  <label className="text-[10px] font-black opacity-50 ml-2 block mb-2 uppercase">Тариф світла (₴/кВт)</label>
+                  <input type="number" value={elecPrice} onChange={e=>setElecPrice(+e.target.value)} className={`${theme.neuInset} w-full p-5 rounded-2xl outline-none font-black text-blue-600 bg-transparent`} />
                 </div>
               </div>
             </div>
 
-            {/* Результат */}
-            <div className={`${neuInset} p-10 rounded-[3rem] text-center`}>
-               <div className="text-[10px] font-black text-slate-400 tracking-widest uppercase mb-4">Себестоимость</div>
-               <div className="text-6xl font-black text-slate-800">{results.total} <span className="text-blue-600 text-3xl">{currency}</span></div>
+            {/* Final Cost Display */}
+            <div className={`${theme.neuInset} p-12 rounded-[3.5rem] text-center`}>
+               <div className="text-[10px] font-black uppercase tracking-[0.3em] opacity-40 mb-4">Собівартість</div>
+               <div className="text-7xl font-black tracking-tighter">
+                {results.total} <span className="text-blue-600 text-3xl font-bold ml-1">₴</span>
+               </div>
             </div>
           </div>
         )}
 
         {calcTab === 'price' && (
-          <div className="space-y-6">
-            <div className={`${neuOutset} p-8 rounded-[2rem]`}>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Процент наценки (%)</label>
-              <input type="range" min="0" max="500" value={markup} onChange={e=>setMarkup(+e.target.value)} className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600 my-8" />
-              <div className="text-center font-black text-2xl text-blue-600">{markup}%</div>
+          <div className="space-y-8 animate-in fade-in duration-500">
+            <div className={`${theme.neuOutset} p-10 rounded-[3rem]`}>
+              <div className="flex justify-between items-center mb-10">
+                <span className="text-[10px] font-black uppercase tracking-widest opacity-50">Націнка</span>
+                <span className="text-2xl font-black text-blue-600">{markup}%</span>
+              </div>
+              <input 
+                type="range" min="0" max="500" value={markup} 
+                onChange={e=>setMarkup(+e.target.value)} 
+                className="w-full h-3 bg-slate-200 dark:bg-slate-800 rounded-full appearance-none cursor-pointer accent-blue-600"
+              />
             </div>
-            <div className={`${neuInset} p-12 rounded-[3rem] text-center`}>
-               <div className="text-[10px] font-black text-slate-400 tracking-widest uppercase mb-4">Цена для клиента</div>
-               <div className="text-7xl font-black text-blue-600">{results.finalPrice} <span className="text-slate-800 text-3xl">{currency}</span></div>
+            <div className={`${theme.neuInset} p-16 rounded-[4rem] text-center`}>
+               <div className="text-[10px] font-black uppercase tracking-[0.3em] opacity-40 mb-6">Ціна для клієнта</div>
+               <div className="text-8xl font-black tracking-tighter text-blue-600">
+                {results.finalPrice} <span className="text-slate-400 text-3xl font-bold ml-2">₴</span>
+               </div>
             </div>
+          </div>
+        )}
+
+        {calcTab === 'file' && (
+          <div className={`${theme.neuOutset} p-20 rounded-[4rem] text-center border-4 border-dashed border-slate-200 dark:border-slate-800 animate-pulse`}>
+            <MousePointer2 size={48} className="mx-auto mb-6 text-blue-600 opacity-50" />
+            <h3 className="text-xl font-black uppercase mb-2">Перетягніть .3mf або .gcode</h3>
+            <p className={`${theme.label} font-bold italic`}>Автоматичний аналіз ваги та часу друку скоро з'явиться.</p>
           </div>
         )}
       </div>
