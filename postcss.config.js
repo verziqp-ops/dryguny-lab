@@ -1,6 +1,5 @@
 module.exports = {
   plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
+    '@tailwindcss/postcss': {}, // Важливо: додаємо саме цей плагін замість просто 'tailwindcss'
   },
 }
