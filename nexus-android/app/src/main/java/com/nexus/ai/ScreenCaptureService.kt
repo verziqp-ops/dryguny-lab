@@ -20,6 +20,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.Looper
 import android.service.quicksettings.TileService
 import android.view.WindowManager
 import java.io.File
@@ -97,6 +98,9 @@ class ScreenCaptureService : Service() {
         isRunning = true
         captureRequested = true
         updateTile()
+        Handler(Looper.getMainLooper()).postDelayed({
+            NexusAccessibilityService.get()?.showAssistantOverlay()
+        }, 250)
         return START_STICKY
     }
 
@@ -183,6 +187,7 @@ class ScreenCaptureService : Service() {
         reader = null
         projection = null
         captureRequested = false
+        NexusAccessibilityService.get()?.hideAssistantOverlay()
         updateTile()
     }
 
