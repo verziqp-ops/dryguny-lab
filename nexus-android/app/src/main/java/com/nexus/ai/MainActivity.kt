@@ -349,52 +349,98 @@ class MainActivity : Activity() {
     }
 
     private fun buildComposer(): View {
-        val outer = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.BOTTOM
-            minimumHeight = dp(66)
-            setPadding(dp(10), dp(5), dp(10), dp(9))
+        val wrapper = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(4), dp(16), dp(10))
             setBackgroundColor(Color.BLACK)
         }
 
-        val attach = iconButton(R.drawable.ic_plus, "Додати")
-        attach.background = glassDrawable(24, 42, 54)
-        attach.setPadding(dp(12), dp(12), dp(12), dp(12))
-        addPressAnimation(attach)
-        attach.setOnClickListener { showAttachmentSheet() }
-        outer.addView(attach, LinearLayout.LayoutParams(dp(48), dp(48)))
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(Color.rgb(47, 47, 47), 28)
+            setPadding(dp(4), dp(4), dp(4), dp(5))
+        }
 
         input = EditText(this).apply {
             hint = "Повідомлення NEXUS"
-            setHintTextColor(Color.rgb(145, 145, 145))
+            setHintTextColor(Color.rgb(166, 166, 166))
             setTextColor(Color.WHITE)
             textSize = 16f
             minLines = 1
-            maxLines = 6
-            gravity = Gravity.CENTER_VERTICAL
+            maxLines = 8
+            gravity = Gravity.TOP or Gravity.START
             setHorizontallyScrolling(false)
-            setPadding(dp(16), dp(10), dp(10), dp(10))
-            setMinHeight(dp(52))
-            setMaxHeight(dp(146))
-            background = glassDrawable(24, 36, 42)
+            isVerticalScrollBarEnabled = true
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            inputType =
+                android.text.InputType.TYPE_CLASS_TEXT or
+                    android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                    android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            setPadding(dp(15), dp(12), dp(15), dp(6))
+            setMinHeight(dp(48))
+            setMaxHeight(dp(196))
+            background = null
+            addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    post {
+                        val lp = layoutParams
+                        if (lp.height != LinearLayout.LayoutParams.WRAP_CONTENT) {
+                            lp.height = LinearLayout.LayoutParams.WRAP_CONTENT
+                            layoutParams = lp
+                        }
+                        requestLayout()
+                        card.requestLayout()
+                        wrapper.requestLayout()
+                    }
+                }
+            })
         }
-        outer.addView(input, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-            marginStart = dp(8)
-            marginEnd = dp(6)
+        card.addView(
+            input,
+            LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT)
+        )
+
+        val controls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), 0, dp(4), dp(2))
+        }
+
+        val attach = iconButton(R.drawable.ic_plus, "Додати").apply {
+            background = rounded(Color.rgb(66, 66, 66), 22)
+            setPadding(dp(11), dp(11), dp(11), dp(11))
+            addPressAnimation(this)
+            setOnClickListener { showAttachmentSheet() }
+        }
+        controls.addView(attach, LinearLayout.LayoutParams(dp(44), dp(44)))
+
+        val screen = iconButton(R.drawable.ic_screen, "Екран").apply {
+            setPadding(dp(11), dp(11), dp(11), dp(11))
+            alpha = 0.92f
+            setOnClickListener { onScreenButton() }
+        }
+        controls.addView(screen, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
+            marginStart = dp(4)
         })
 
-        val mic = iconButton(R.drawable.ic_mic, "Голос")
-        mic.setOnClickListener { startVoice() }
-        outer.addView(mic, LinearLayout.LayoutParams(dp(44), dp(44)))
+        controls.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+
+        val mic = iconButton(R.drawable.ic_mic, "Голос").apply {
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            setOnClickListener { startVoice() }
+        }
+        controls.addView(mic, LinearLayout.LayoutParams(dp(44), dp(44)))
 
         sendButton = ImageButton(this).apply {
             setImageResource(R.drawable.ic_send)
             contentDescription = "Надіслати"
             background = GradientDrawable().apply {
                 setColor(Color.WHITE)
-                cornerRadius = dp(23).toFloat()
+                cornerRadius = dp(22).toFloat()
             }
-            setPadding(dp(11), dp(11), dp(11), dp(11))
+            setPadding(dp(10), dp(10), dp(10), dp(10))
             addPressAnimation(this)
             setOnClickListener {
                 if (generatingResponse) {
@@ -404,8 +450,13 @@ class MainActivity : Activity() {
                 }
             }
         }
-        outer.addView(sendButton, LinearLayout.LayoutParams(dp(46), dp(46)))
-        return outer
+        controls.addView(sendButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
+            marginStart = dp(4)
+        })
+
+        card.addView(controls, LinearLayout.LayoutParams(-1, dp(48)))
+        wrapper.addView(card, LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT))
+        return wrapper
     }
 
     private fun cleanLegacyNoise() {
