@@ -1,15 +1,21 @@
 package com.nexus.ai
 
 import android.content.Intent
+import android.Manifest
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -35,8 +41,11 @@ class ScreenAssistController(
     private var input: EditText? = null
     private var sendButton: TextView? = null
     private var pendingQuestion: String? = null
+    private var activeGoal: String? = null
     private var busy = false
     private var live = false
+    private var collapsed = false
+    private var recognizer: SpeechRecognizer? = null
     private var lastScreenSignature = ""
     private var lastAnalyzeAt = 0L
 
@@ -73,6 +82,11 @@ class ScreenAssistController(
             elevation = dp(10).toFloat()
         }
 
+        val headerRow = LinearLayout(service).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
         val drag = TextView(service).apply {
             text = "NEXUS  ·  Screen Assist"
             setTextColor(Color.rgb(205, 205, 205))
@@ -81,7 +95,30 @@ class ScreenAssistController(
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(8), dp(3), dp(8), dp(5))
         }
-        panel.addView(drag, LinearLayout.LayoutParams(-1, dp(30)))
+        headerRow.addView(drag, LinearLayout.LayoutParams(0, dp(30), 1f))
+
+        val collapse = TextView(service).apply {
+            text = "—"
+            setTextColor(Color.WHITE)
+            textSize = 18f
+            gravity = Gravity.CENTER
+            setOnClickListener {
+                collapsed = !collapsed
+                inputRow.visibility = if (collapsed) android.view.View.GONE else android.view.View.VISIBLE
+                actions.visibility = if (collapsed) android.view.View.GONE else android.view.View.VISIBLE
+                messageView?.visibility = if (collapsed) android.view.View.GONE else android.view.View.VISIBLE
+                text = if (collapsed) "N" else "—"
+                if (collapsed) hideIme()
+                try {
+                    val current = params
+                    val containerView = root
+                    if (current != null && containerView != null) wm.updateViewLayout(containerView, current)
+                } catch (_: Exception) {}
+            }
+        }
+        headerRow.addView(collapse, LinearLayout.LayoutParams(dp(42), dp(30)))
+
+        panel.addView(headerRow, LinearLayout.LayoutParams(-1, dp(30)))
 
         val inputRow = LinearLayout(service).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -106,6 +143,18 @@ class ScreenAssistController(
             background = rounded(Color.rgb(47, 47, 47), 18)
         }
         inputRow.addView(input, LinearLayout.LayoutParams(0, -2, 1f))
+
+        val micButton = TextView(service).apply {
+            text = "MIC"
+            textSize = 10f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            background = rounded(Color.rgb(55, 55, 55), 18)
+            setOnClickListener { startVoiceInput() }
+        }
+        inputRow.addView(micButton, LinearLayout.LayoutParams(dp(46), dp(42)).apply {
+            marginStart = dp(7)
+        })
 
         sendButton = TextView(service).apply {
             text = "↑"
@@ -249,6 +298,7 @@ class ScreenAssistController(
             return
         }
 
+        activeGoal = question
         val visible = service.screenText().take(6000)
         val online = NetworkState.hasInternet(service)
         val prompt = buildString {
@@ -275,6 +325,9 @@ class ScreenAssistController(
         live = false
         handler.removeCallbacks(liveRunnable)
         pendingQuestion = null
+        activeGoal = null
+        try { recognizer?.destroy() } catch (_: Exception) {}
+        recognizer = null
         if (NexusRuntime.engine(service).generationOwner == "screen") {
             NexusRuntime.engine(service).cancelGeneration("screen")
         }
@@ -312,6 +365,9 @@ class ScreenAssistController(
         val online = NetworkState.hasInternet(service)
         val prompt = buildString {
             append("Ти екранний помічник Android. Подивись на поточний екран і дай ОДНУ коротку корисну підказку українською. ")
+            activeGoal?.let {
+                append("Поточна ціль користувача: ").append(it).append(". Веди його до цієї цілі крок за кроком і не забувай її між змінами екрана. ")
+            }
             append("Якщо користувачу варто натиснути конкретний видимий елемент, в кінці додай [[tap:ТОЧНИЙ ТЕКСТ ЕЛЕМЕНТА]]. ")
             if (online) {
                 append("Якщо потрібна свіжа інформація з інтернету, додай [[google:КОРОТКИЙ ПОШУКОВИЙ ЗАПИТ]]. ")
@@ -466,6 +522,55 @@ class ScreenAssistController(
                 }
             }
         }, 1950)
+    }
+
+    private fun startVoiceInput() {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                service,
+                Manifest.permission.RECORD_AUDIO
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            message("Дозволь мікрофон у NEXUS, тоді голос працюватиме тут.")
+            return
+        }
+
+        try { recognizer?.destroy() } catch (_: Exception) {}
+        recognizer = SpeechRecognizer.createSpeechRecognizer(service).apply {
+            setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) { message("Слухаю…") }
+                override fun onBeginningOfSpeech() {}
+                override fun onRmsChanged(rmsdB: Float) {}
+                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onEndOfSpeech() {}
+                override fun onError(error: Int) {
+                    message("Не розпізнав голос. Спробуй ще раз.")
+                }
+                override fun onResults(results: Bundle?) {
+                    val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    val text = list?.firstOrNull()?.trim().orEmpty()
+                    if (text.isNotEmpty()) {
+                        input?.setText(text)
+                        input?.setSelection(text.length)
+                    }
+                }
+                override fun onPartialResults(partialResults: Bundle?) {
+                    val list = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    val text = list?.firstOrNull()?.trim().orEmpty()
+                    if (text.isNotEmpty()) {
+                        input?.setText(text)
+                        input?.setSelection(text.length)
+                    }
+                }
+                override fun onEvent(eventType: Int, params: Bundle?) {}
+            })
+        }
+
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+        }
+        recognizer?.startListening(intent)
     }
 
     private fun resetSendButton() {
