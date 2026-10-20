@@ -83,7 +83,7 @@ class ModelManager(private val context: Context) {
             .setAllowedOverMetered(true)
             .setAllowedOverRoaming(false)
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            .setDestinationUri(Uri.fromFile(file))
+            .setDestinationInExternalFilesDir(context, "models", spec.fileName)
         val id = dm.enqueue(request)
         prefs.edit().putLong("download_" + spec.id, id).apply()
         return id
