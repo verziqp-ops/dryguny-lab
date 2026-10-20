@@ -25,6 +25,7 @@ public class NexusAccessibilityService extends AccessibilityService {
     private static NexusAccessibilityService instance;
     private WindowManager wm;
     private View highlight;
+    private ScreenAssistController screenAssist;
 
     public static NexusAccessibilityService get(){ return instance; }
     public static boolean isEnabled(){ return instance != null; }
@@ -38,15 +39,37 @@ public class NexusAccessibilityService extends AccessibilityService {
                 | AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS;
         setServiceInfo(info);
         wm=(WindowManager)getSystemService(WINDOW_SERVICE);
+        screenAssist=new ScreenAssistController(this);
     }
 
-    @Override public void onAccessibilityEvent(AccessibilityEvent event){}
+    @Override public void onAccessibilityEvent(AccessibilityEvent event){
+        if(screenAssist!=null) screenAssist.onScreenChanged();
+    }
     @Override public void onInterrupt(){}
 
     @Override public void onDestroy(){
+        if(screenAssist!=null){ try{ screenAssist.hide(); }catch(Exception ignored){} }
         if(highlight!=null && wm!=null){ try{ wm.removeView(highlight); }catch(Exception ignored){} }
         if(instance==this) instance=null;
         super.onDestroy();
+    }
+
+    public void showAssistantOverlay(){
+        if(screenAssist==null) screenAssist=new ScreenAssistController(this);
+        screenAssist.show();
+    }
+
+    public void hideAssistantOverlay(){
+        if(screenAssist!=null) screenAssist.hide();
+    }
+
+    public void highlightText(String query){
+        if(query==null || query.trim().isEmpty()) return;
+        AccessibilityNodeInfo node=find(getRootInActiveWindow(),query.trim());
+        if(node==null) return;
+        Rect rect=new Rect();
+        node.getBoundsInScreen(rect);
+        showHighlight(rect);
     }
 
     public void executeCommand(String command, ResultCallback callback){
