@@ -1292,15 +1292,15 @@ class MainActivity : Activity() {
                     setOnClickListener {
                         when {
                             downloaded -> {
+                                modelManager.setSelected(spec)
                                 loadingModel = true
                                 loadingModelId = spec.id
-                                render()
                                 updateHeader()
+                                dialog.dismiss()
                                 useModel(spec) { ok, message ->
                                     if (!ok) {
                                         Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
                                     }
-                                    render()
                                 }
                             }
                             else -> {
@@ -1488,6 +1488,7 @@ class MainActivity : Activity() {
             return
         }
 
+        modelManager.setSelected(spec)
         loadingModel = true
         loadingModelId = spec.id
         updateHeader()
@@ -1497,7 +1498,6 @@ class MainActivity : Activity() {
             loadingModelId = null
 
             if (ok) {
-                modelManager.setSelected(spec)
                 Toast.makeText(this, spec.label + " активна", Toast.LENGTH_SHORT).show()
             } else {
                 modelManager.clearSelected()
