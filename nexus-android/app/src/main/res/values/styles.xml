@@ -20,6 +20,16 @@
         <item name="android:textColorSecondary">#B7B7B7</item>
         <item name="android:windowTitleStyle">@android:style/TextAppearance.Material.Headline</item>
         <item name="android:buttonStyle">@style/NexusButtonStyle</item>
+        <item name="android:buttonBarPositiveButtonStyle">@style/NexusDialogButtonStyle</item>
+        <item name="android:buttonBarNegativeButtonStyle">@style/NexusDialogButtonStyle</item>
+        <item name="android:buttonBarNeutralButtonStyle">@style/NexusDialogButtonStyle</item>
+    </style>
+
+    <style name="NexusDialogButtonStyle" parent="@android:style/Widget.Material.Button">
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="android:backgroundTint">#424242</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:minHeight">44dp</item>
     </style>
 
     <style name="NexusButtonStyle" parent="@android:style/Widget.Material.Button">
