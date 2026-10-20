@@ -53,21 +53,34 @@ class LocalLlmEngine(private val context: Context) {
                 return@launch
             }
 
+            val wantsVision = isVisionModel(path)
+
             try {
-                initializeTextOnly(path, 1024)
+                initialize(path, 1024, wantsVision)
                 isLoaded = true
                 modelPath = path
                 context.getSharedPreferences("nexus_model", Context.MODE_PRIVATE)
                     .edit().putString("model_path", path).apply()
-                main.post { onDone(true, "Модель готова") }
+                main.post {
+                    onDone(
+                        true,
+                        if (wantsVision) "Vision-модель готова" else "Модель готова"
+                    )
+                }
             } catch (first: Throwable) {
                 try {
-                    initializeTextOnly(path, 640)
+                    initialize(path, 640, wantsVision)
                     isLoaded = true
                     modelPath = path
                     context.getSharedPreferences("nexus_model", Context.MODE_PRIVATE)
                         .edit().putString("model_path", path).apply()
-                    main.post { onDone(true, "Модель готова у легкому режимі") }
+                    main.post {
+                        onDone(
+                            true,
+                            if (wantsVision) "Vision-модель готова у легкому режимі"
+                            else "Модель готова у легкому режимі"
+                        )
+                    }
                 } catch (second: Throwable) {
                     closeInternal()
                     main.post { onDone(false, friendlyError(second)) }
@@ -76,27 +89,37 @@ class LocalLlmEngine(private val context: Context) {
         }
     }
 
-    private fun initializeTextOnly(path: String, maxTokens: Int) {
+    private fun initialize(path: String, maxTokens: Int, vision: Boolean) {
         closeInternal()
 
         var newEngine: Engine? = null
         var newConversation: Conversation? = null
         try {
-            newEngine = Engine(
-                EngineConfig(
-                    modelPath = path,
-                    backend = Backend.CPU(threadCount = 4),
-                    maxNumTokens = maxTokens,
-                    cacheDir = context.cacheDir.absolutePath,
-                )
-            )
-            newEngine.initialize()
+            val config =
+                if (vision) {
+                    EngineConfig(
+                        modelPath = path,
+                        backend = Backend.CPU(threadCount = 4),
+                        visionBackend = Backend.CPU(threadCount = 4),
+                        maxNumTokens = maxTokens,
+                        cacheDir = context.cacheDir.absolutePath,
+                    )
+                } else {
+                    EngineConfig(
+                        modelPath = path,
+                        backend = Backend.CPU(threadCount = 4),
+                        maxNumTokens = maxTokens,
+                        cacheDir = context.cacheDir.absolutePath,
+                    )
+                }
 
+            newEngine = Engine(config)
+            newEngine.initialize()
             newConversation = newEngine.createConversation(conversationConfig())
 
             engine = newEngine
             conversation = newConversation
-            mediaPipelineEnabled = false
+            mediaPipelineEnabled = vision
         } catch (e: Throwable) {
             try { newConversation?.close() } catch (_: Throwable) {}
             try {
@@ -104,6 +127,11 @@ class LocalLlmEngine(private val context: Context) {
             } catch (_: Throwable) {}
             throw e
         }
+    }
+
+    private fun isVisionModel(path: String): Boolean {
+        val name = File(path).name.lowercase(Locale.ROOT)
+        return "-vl_" in name || "-vl." in name || "vision" in name
     }
 
     fun setHistory(messages: List<StoredMessage>) {
@@ -182,8 +210,9 @@ class LocalLlmEngine(private val context: Context) {
             if (languageFilter) {
                 "Avoid profanity and unnecessarily explicit wording."
             } else {
-                "Ordinary profanity is allowed. If the user swears or explicitly asks you to swear, you may use natural profanity. " +
-                    "Do not replace ordinary swear words with asterisks, euphemisms, or moralizing warnings merely because they are rude."
+                "Ordinary profanity is allowed. You may naturally use profanity when it fits the conversation or when the user asks for it. " +
+                    "Do not replace ordinary swear words with asterisks or euphemisms merely because they are rude. " +
+                    "Do not add moralizing warnings about ordinary profanity."
             }
 
         val languageRule = when (replyLanguage) {
