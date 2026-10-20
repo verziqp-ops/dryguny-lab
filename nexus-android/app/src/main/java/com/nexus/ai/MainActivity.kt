@@ -3,6 +3,7 @@ package com.nexus.ai
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.StatusBarManager
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -15,7 +16,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
-import android.service.quicksettings.TileService
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -122,7 +122,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(12), dp(14), dp(14))
         }
-        chatScroll.addView(chatContainer, ScrollView.LayoutParams(-1, -2))
+        chatScroll.addView(chatContainer, android.widget.FrameLayout.LayoutParams(-1, -2))
         root.addView(chatScroll, LinearLayout.LayoutParams(-1, 0, 1f))
 
         val attachScroll = HorizontalScrollView(this).apply {
@@ -133,7 +133,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(12), dp(4), dp(12), dp(4))
         }
-        attachScroll.addView(attachmentStrip, HorizontalScrollView.LayoutParams(-2, dp(44)))
+        attachScroll.addView(attachmentStrip, android.widget.FrameLayout.LayoutParams(-2, dp(44)))
         root.addView(attachScroll, LinearLayout.LayoutParams(-1, dp(52)))
 
         root.addView(buildComposer(), LinearLayout.LayoutParams(-1, dp(78)))
@@ -674,13 +674,13 @@ class MainActivity : Activity() {
     private fun requestTile() {
         if (Build.VERSION.SDK_INT >= 33) {
             val component = ComponentName(this, NexusTileService::class.java)
-            TileService.requestAddTileService(
-                this,
+            val statusBar = getSystemService(StatusBarManager::class.java)
+            statusBar.requestAddTileService(
                 component,
                 "NEXUS Screen",
                 Icon.createWithResource(this, R.drawable.ic_screen),
                 mainExecutor
-            ) { result ->
+            ) { result: Int ->
                 Toast.makeText(this, "Результат додавання плитки: $result", Toast.LENGTH_SHORT).show()
             }
         } else {
@@ -797,7 +797,7 @@ class MainActivity : Activity() {
                 val attachment = TextView(this).apply {
                     setTextColor(Color.rgb(190, 190, 190))
                     textSize = 12f
-                    text = name
+                    this.text = name
                     setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_file, 0, 0, 0)
                     compoundDrawablePadding = dp(6)
                 }
