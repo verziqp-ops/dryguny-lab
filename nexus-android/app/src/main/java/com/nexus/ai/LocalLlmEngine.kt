@@ -12,6 +12,7 @@ import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.MessageCallback
+import com.google.ai.edge.litertlm.ThinkingConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,6 +27,7 @@ class LocalLlmEngine(private val context: Context) {
     private var engine: Engine? = null
     private var conversation: Conversation? = null
     private var historySnapshot: MutableList<StoredMessage> = mutableListOf()
+    private var supportsThinkingModel: Boolean = false
 
     @Volatile var isLoaded: Boolean = false
         private set
@@ -54,6 +56,7 @@ class LocalLlmEngine(private val context: Context) {
             }
 
             val wantsVision = isVisionModel(path)
+            supportsThinkingModel = File(path).name.lowercase(Locale.ROOT).contains("qwen3.5")
 
             try {
                 initialize(path, 1024, wantsVision)
@@ -180,7 +183,11 @@ class LocalLlmEngine(private val context: Context) {
         return ConversationConfig(
             systemInstruction = Contents.of(Content.Text(systemInstruction())),
             initialMessages = initial,
-            maxOutputToken = 256,
+            maxOutputToken = if (supportsThinkingModel) 384 else 256,
+            thinkingConfig =
+                if (supportsThinkingModel)
+                    ThinkingConfig(enableThinking = true, thinkingTokenBudget = 128)
+                else null,
             enableSpeculativeDecoding = false,
         )
     }
@@ -352,6 +359,7 @@ class LocalLlmEngine(private val context: Context) {
         engine = null
         isLoaded = false
         mediaPipelineEnabled = false
+        supportsThinkingModel = false
     }
 
     private fun friendlyError(error: Throwable): String {
