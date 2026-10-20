@@ -310,7 +310,13 @@ class LocalLlmEngine(private val context: Context) {
             else -> "Detect the language of the user's latest message and answer in that same language. Never default to English when the user wrote in another language."
         }
 
+        val memoryText = MemoryStore(context).summary()
+        val memoryRule =
+            if (memoryText.isBlank()) ""
+            else "Long-term user memories saved locally:\n" + memoryText + "\nUse them only when relevant to the user's current request. "
+
         return "You are NEXUS, a private on-device Android assistant. " +
+            memoryRule +
             languageRule + " " +
             "Be useful and naturally detailed when the request benefits from detail. Do not answer with a one-line fragment when the user clearly expects an explanation. " +
             "The user often types quickly on a phone and may make heavy spelling mistakes, missing letters, swapped letters, or phonetic typos. " +
