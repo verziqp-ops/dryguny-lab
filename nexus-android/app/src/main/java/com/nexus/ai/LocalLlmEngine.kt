@@ -77,44 +77,32 @@ class LocalLlmEngine(private val context: Context) {
                 else -> 1024
             }
 
-            val backendPrefs = context.getSharedPreferences("nexus_backend", Context.MODE_PRIVATE)
-            val backendKey = "backend_" + File(path).name.hashCode()
-            val savedBackend = backendPrefs.getString(backendKey, "auto") ?: "auto"
+            val preferredTokens = when {
+                wantsVision -> 768
+                File(path).name.contains("4B", ignoreCase = true) -> 640
+                File(path).name.contains("2B", ignoreCase = true) -> 1024
+                else -> 768
+            }
 
-            fun markLoaded(backendName: String, light: Boolean = false) {
+            fun markLoaded(light: Boolean = false) {
                 isLoaded = true
                 modelPath = path
-                backendPrefs.edit().putString(backendKey, backendName).apply()
                 context.getSharedPreferences("nexus_model", Context.MODE_PRIVATE)
                     .edit().putString("model_path", path).apply()
                 main.post {
-                    val mode = if (backendName == "gpu") "GPU" else "CPU"
-                    val suffix = if (light) " · легкий режим" else ""
-                    onDone(true, mode + suffix)
-                }
-            }
-
-            if (savedBackend != "cpu") {
-                try {
-                    initialize(path, preferredTokens, wantsVision, useGpu = true)
-                    markLoaded("gpu")
-                    return@launch
-                } catch (_: Throwable) {
-                    backendPrefs.edit().putString(backendKey, "cpu").apply()
-                    closeInternal()
-                    supportsThinkingModel = File(path).name.lowercase(Locale.ROOT).contains("qwen3.5")
+                    onDone(true, if (light) "CPU · легкий режим" else "CPU")
                 }
             }
 
             try {
-                initialize(path, preferredTokens, wantsVision, useGpu = false)
-                markLoaded("cpu")
+                initialize(path, preferredTokens, wantsVision)
+                markLoaded()
             } catch (_: Throwable) {
                 try {
                     closeInternal()
                     supportsThinkingModel = File(path).name.lowercase(Locale.ROOT).contains("qwen3.5")
-                    initialize(path, 640, wantsVision, useGpu = false)
-                    markLoaded("cpu", light = true)
+                    initialize(path, 512, wantsVision)
+                    markLoaded(light = true)
                 } catch (second: Throwable) {
                     closeInternal()
                     main.post { onDone(false, friendlyError(second)) }
@@ -123,21 +111,15 @@ class LocalLlmEngine(private val context: Context) {
         }
     }
 
-    private fun initialize(path: String, maxTokens: Int, vision: Boolean, useGpu: Boolean) {
+    private fun initialize(path: String, maxTokens: Int, vision: Boolean) {
         var newEngine: Engine? = null
         var newConversation: Conversation? = null
         try {
             val cache = File(context.cacheDir, "litert_" + File(path).name.hashCode()).apply { mkdirs() }
-            val mainBackend: Backend =
-                if (useGpu) Backend.GPU() else Backend.CPU(threadCount = 4)
-            val visualBackend: Backend? =
-                if (!vision) null
-                else if (useGpu) Backend.GPU() else Backend.CPU(threadCount = 4)
-
             val config = EngineConfig(
                 modelPath = path,
-                backend = mainBackend,
-                visionBackend = visualBackend,
+                backend = Backend.CPU(threadCount = 6),
+                visionBackend = if (vision) Backend.CPU(threadCount = 6) else null,
                 maxNumTokens = maxTokens,
                 cacheDir = cache.absolutePath,
             )
