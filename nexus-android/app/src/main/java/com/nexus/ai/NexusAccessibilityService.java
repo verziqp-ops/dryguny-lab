@@ -25,6 +25,7 @@ public class NexusAccessibilityService extends AccessibilityService {
     private static NexusAccessibilityService instance;
     private WindowManager wm;
     private View highlight;
+    private View highlightLabel;
     private ScreenAssistController screenAssist;
 
     public static NexusAccessibilityService get(){ return instance; }
@@ -50,6 +51,7 @@ public class NexusAccessibilityService extends AccessibilityService {
     @Override public void onDestroy(){
         if(screenAssist!=null){ try{ screenAssist.hide(); }catch(Exception ignored){} }
         if(highlight!=null && wm!=null){ try{ wm.removeView(highlight); }catch(Exception ignored){} }
+        if(highlightLabel!=null && wm!=null){ try{ wm.removeView(highlightLabel); }catch(Exception ignored){} }
         if(instance==this) instance=null;
         super.onDestroy();
     }
@@ -266,31 +268,73 @@ public class NexusAccessibilityService extends AccessibilityService {
 
     private void showHighlight(Rect rect){
         if(wm==null || rect==null || rect.isEmpty()) return;
+
         if(highlight!=null){ try{ wm.removeView(highlight); }catch(Exception ignored){} }
+        if(highlightLabel!=null){ try{ wm.removeView(highlightLabel); }catch(Exception ignored){} }
+
         View view=new View(this);
         GradientDrawable bg=new GradientDrawable();
-        bg.setColor(Color.argb(20,255,255,255));
+        bg.setColor(Color.argb(28,255,255,255));
         bg.setStroke(dp(3),Color.WHITE);
-        bg.setCornerRadius(dp(8));
+        bg.setCornerRadius(dp(10));
         view.setBackground(bg);
+
         WindowManager.LayoutParams p=new WindowManager.LayoutParams(
-                Math.max(dp(8),rect.width()),Math.max(dp(8),rect.height()),
+                Math.max(dp(12),rect.width()+dp(8)),Math.max(dp(12),rect.height()+dp(8)),
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT);
         p.gravity=Gravity.TOP|Gravity.START;
-        p.x=rect.left; p.y=rect.top;
+        p.x=Math.max(0,rect.left-dp(4));
+        p.y=Math.max(0,rect.top-dp(4));
+
+        android.widget.TextView label=new android.widget.TextView(this);
+        label.setText("Натисни сюди");
+        label.setTextColor(Color.BLACK);
+        label.setTextSize(12);
+        label.setGravity(Gravity.CENTER);
+        label.setPadding(dp(10),dp(5),dp(10),dp(5));
+        GradientDrawable lbg=new GradientDrawable();
+        lbg.setColor(Color.WHITE);
+        lbg.setCornerRadius(dp(14));
+        label.setBackground(lbg);
+
+        WindowManager.LayoutParams lp=new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,dp(32),
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT);
+        lp.gravity=Gravity.TOP|Gravity.START;
+        lp.x=Math.max(dp(4),rect.left);
+        lp.y=Math.max(dp(4),rect.top-dp(38));
+
         highlight=view;
+        highlightLabel=label;
         try{
             wm.addView(view,p);
+            wm.addView(label,lp);
+
+            view.animate().alpha(0.45f).setDuration(260).withEndAction(
+                    ()->view.animate().alpha(1f).setDuration(260).start()
+            ).start();
+
             view.postDelayed(()->{
                 if(highlight==view){
                     try{ wm.removeView(view); }catch(Exception ignored){}
                     highlight=null;
                 }
-            },1500);
-        }catch(Exception e){ highlight=null; }
+                if(highlightLabel==label){
+                    try{ wm.removeView(label); }catch(Exception ignored){}
+                    highlightLabel=null;
+                }
+            },2200);
+        }catch(Exception e){
+            highlight=null;
+            highlightLabel=null;
+        }
     }
 }
