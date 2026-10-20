@@ -158,12 +158,32 @@ class MainActivity : Activity() {
     private fun configureInsets() {
         window.statusBarColor = Color.BLACK
         window.navigationBarColor = Color.BLACK
-        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
 
         if (Build.VERSION.SDK_INT >= 30) {
-            // Let Android resize the activity for the IME instead of drawing the keyboard over the composer.
-            window.setDecorFitsSystemWindows(true)
-            root.setOnApplyWindowInsetsListener(null)
+            window.setDecorFitsSystemWindows(false)
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
+
+            root.setOnApplyWindowInsetsListener { view, insets ->
+                val bars = insets.getInsets(WindowInsets.Type.systemBars())
+                val ime = insets.getInsets(WindowInsets.Type.ime())
+                val bottom = max(bars.bottom, ime.bottom)
+
+                view.setPadding(0, bars.top, 0, bottom)
+
+                if (ime.bottom > bars.bottom) {
+                    handler.post {
+                        if (::input.isInitialized) {
+                            input.requestLayout()
+                            input.post { input.setSelection(input.text.length) }
+                        }
+                        if (::chatScroll.isInitialized) scrollBottom()
+                    }
+                }
+                insets
+            }
+            root.requestApplyInsets()
+        } else {
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         }
     }
 
