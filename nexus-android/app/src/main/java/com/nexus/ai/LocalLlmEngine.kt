@@ -58,8 +58,14 @@ class LocalLlmEngine(private val context: Context) {
             val wantsVision = isVisionModel(path)
             supportsThinkingModel = File(path).name.lowercase(Locale.ROOT).contains("qwen3.5")
 
+            val preferredTokens = when {
+                wantsVision -> 1024
+                File(path).name.contains("2B", ignoreCase = true) -> 1536
+                else -> 1024
+            }
+
             try {
-                initialize(path, 1024, wantsVision)
+                initialize(path, preferredTokens, wantsVision)
                 isLoaded = true
                 modelPath = path
                 context.getSharedPreferences("nexus_model", Context.MODE_PRIVATE)
@@ -93,8 +99,6 @@ class LocalLlmEngine(private val context: Context) {
     }
 
     private fun initialize(path: String, maxTokens: Int, vision: Boolean) {
-        closeInternal()
-
         var newEngine: Engine? = null
         var newConversation: Conversation? = null
         try {
@@ -195,7 +199,7 @@ class LocalLlmEngine(private val context: Context) {
     private fun compactHistory(messages: List<StoredMessage>): List<StoredMessage> {
         if (messages.isEmpty()) return emptyList()
         val selected = mutableListOf<StoredMessage>()
-        var remainingChars = 3000
+        var remainingChars = 2200
 
         for (m in messages.asReversed()) {
             if (m.role != "user" && m.role != "assistant" && m.role != "model") continue
