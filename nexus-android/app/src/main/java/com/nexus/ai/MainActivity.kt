@@ -3,11 +3,15 @@ package com.nexus.ai
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Dialog
+import android.app.DownloadManager
 import android.app.StatusBarManager
 import android.content.ComponentName
+import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.Icon
 import android.net.Uri
@@ -15,21 +19,27 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
+import android.speech.tts.Voice
 import android.view.Gravity
 import android.view.View
+import android.view.WindowInsets
+import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.TextView
 import android.widget.Switch
+import android.widget.TextView
 import android.widget.Toast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,18 +48,24 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
+import kotlin.math.max
 
 class MainActivity : Activity() {
     companion object {
-        private const val REQ_ATTACH = 201
+        private const val REQ_FILES = 201
         private const val REQ_MODEL = 202
         private const val REQ_FOLDER = 203
         private const val REQ_AUDIO = 204
+        private const val REQ_PHOTO = 205
+        private const val REQ_VIDEO = 206
+        private const val REQ_CAMERA = 207
     }
 
+    private lateinit var root: LinearLayout
     private lateinit var chatScroll: ScrollView
     private lateinit var chatContainer: LinearLayout
     private lateinit var input: EditText
+    private lateinit var attachmentScroll: HorizontalScrollView
     private lateinit var attachmentStrip: LinearLayout
     private lateinit var modelStatus: TextView
     private lateinit var screenButton: ImageButton
@@ -57,30 +73,45 @@ class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val attachments = mutableListOf<NexusAttachment>()
-    private val messages = mutableListOf<StoredMessage>()
 
-    private lateinit var store: ChatStore
     private lateinit var attachmentManager: AttachmentManager
     private lateinit var fileIndex: LocalFileIndex
     private lateinit var llm: LocalLlmEngine
+    private lateinit var modelManager: ModelManager
+    private lateinit var conversationStore: ConversationStore
+
+    private var chats = mutableListOf<ChatSession>()
+    private lateinit var activeChat: ChatSession
 
     private var recognizer: SpeechRecognizer? = null
+    private var tts: TextToSpeech? = null
+    private var voiceReplyPending = false
     private var pendingScreenAttachment = false
+    private var pendingCameraUri: Uri? = null
     private var loadingModel = false
+
     private val prefs by lazy { getSharedPreferences("nexus_settings", MODE_PRIVATE) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        store = ChatStore(this)
+
         attachmentManager = AttachmentManager(this)
         fileIndex = LocalFileIndex(this)
         llm = LocalLlmEngine(this)
+        modelManager = ModelManager(this)
+        conversationStore = ConversationStore(this)
 
-        setContentView(buildUi())
-        restoreChat()
+        chats = conversationStore.migrateLegacyIfNeeded()
+        val wanted = conversationStore.activeId()
+        activeChat = chats.firstOrNull { it.id == wanted } ?: chats.first()
+
+        root = buildUi()
+        setContentView(root)
+        configureInsets()
+        renderActiveChat()
         handleIncomingIntent(intent)
-        loadSavedModel()
-        requestNotificationPermissionIfNeeded()
+        initTts()
+        loadSelectedModel()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -94,88 +125,114 @@ class MainActivity : Activity() {
         updateHeader()
         if (pendingScreenAttachment && ScreenCaptureService.isRunning) {
             ScreenCaptureService.requestFreshCapture()
-            handler.postDelayed({ attachLatestScreen() }, 850)
+            handler.postDelayed({ attachLatestScreen() }, 650)
         }
     }
 
     override fun onDestroy() {
         recognizer?.destroy()
         recognizer = null
+        tts?.stop()
+        tts?.shutdown()
+        tts = null
         llm.close()
         super.onDestroy()
     }
 
-    private fun buildUi(): View {
-        window.statusBarColor = Color.BLACK
-        window.navigationBarColor = Color.BLACK
+    private fun configureInsets() {
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
+        if (Build.VERSION.SDK_INT >= 30) {
+            window.setDecorFitsSystemWindows(false)
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
+            root.setOnApplyWindowInsetsListener { view, insets ->
+                val bars = insets.getInsets(WindowInsets.Type.systemBars())
+                val ime = insets.getInsets(WindowInsets.Type.ime())
+                view.setPadding(0, bars.top, 0, max(bars.bottom, ime.bottom))
+                insets
+            }
+            root.requestApplyInsets()
+        } else {
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        }
+    }
 
-        val root = LinearLayout(this).apply {
+    private fun buildUi(): LinearLayout {
+        val outer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.BLACK)
+            clipToPadding = false
         }
 
-        root.addView(buildHeader(), LinearLayout.LayoutParams(-1, dp(64)))
+        outer.addView(buildHeader(), LinearLayout.LayoutParams(-1, dp(60)))
 
         chatScroll = ScrollView(this).apply {
             isFillViewport = true
             setBackgroundColor(Color.BLACK)
+            isVerticalScrollBarEnabled = false
         }
         chatContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(12), dp(14), dp(14))
+            setPadding(dp(14), dp(10), dp(14), dp(14))
         }
-        chatScroll.addView(chatContainer, android.widget.FrameLayout.LayoutParams(-1, -2))
-        root.addView(chatScroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        chatScroll.addView(chatContainer, FrameLayout.LayoutParams(-1, -2))
+        outer.addView(chatScroll, LinearLayout.LayoutParams(-1, 0, 1f))
 
-        val attachScroll = HorizontalScrollView(this).apply {
+        attachmentScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             setBackgroundColor(Color.BLACK)
+            visibility = View.GONE
         }
         attachmentStrip = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(12), dp(4), dp(12), dp(4))
+            setPadding(dp(12), dp(3), dp(12), dp(3))
         }
-        attachScroll.addView(attachmentStrip, android.widget.FrameLayout.LayoutParams(-2, dp(44)))
-        root.addView(attachScroll, LinearLayout.LayoutParams(-1, dp(52)))
+        attachmentScroll.addView(attachmentStrip, FrameLayout.LayoutParams(-2, dp(42)))
+        outer.addView(attachmentScroll, LinearLayout.LayoutParams(-1, dp(48)))
 
-        root.addView(buildComposer(), LinearLayout.LayoutParams(-1, dp(78)))
-        return root
+        outer.addView(buildComposer(), LinearLayout.LayoutParams(-1, dp(72)))
+        return outer
     }
 
     private fun buildHeader(): View {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(8), dp(10), dp(6))
+            setPadding(dp(8), dp(4), dp(8), dp(4))
             setBackgroundColor(Color.BLACK)
         }
+
+        val menu = iconButton(R.drawable.ic_menu, "Чати")
+        menu.setOnClickListener { showChatDrawer() }
+        row.addView(menu, LinearLayout.LayoutParams(dp(50), dp(50)))
 
         val titleBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), 0, 0, 0)
         }
         val title = TextView(this).apply {
             text = "NEXUS"
             setTextColor(Color.WHITE)
-            textSize = 19f
+            textSize = 18f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
         }
         modelStatus = TextView(this).apply {
             text = "OFFLINE"
-            setTextColor(Color.rgb(150, 150, 150))
+            setTextColor(Color.rgb(145, 145, 145))
             textSize = 11f
+            setOnClickListener { showModelManager() }
         }
         titleBox.addView(title)
         titleBox.addView(modelStatus)
         row.addView(titleBox, LinearLayout.LayoutParams(0, -1, 1f))
 
-        val screen = iconButton(R.drawable.ic_screen, "Захоплення екрана")
-        screenButton = screen
-        screen.setOnClickListener { onScreenButton() }
-        row.addView(screen, LinearLayout.LayoutParams(dp(48), dp(48)))
+        screenButton = iconButton(R.drawable.ic_screen, "Захоплення екрана")
+        screenButton.setOnClickListener { onScreenButton() }
+        row.addView(screenButton, LinearLayout.LayoutParams(dp(48), dp(48)))
 
-        val model = iconButton(R.drawable.ic_model, "Локальна модель")
-        model.setOnClickListener { chooseModel() }
+        val model = iconButton(R.drawable.ic_model, "Моделі")
+        model.setOnClickListener { showModelManager() }
         row.addView(model, LinearLayout.LayoutParams(dp(48), dp(48)))
 
         val settings = iconButton(R.drawable.ic_settings, "Налаштування")
@@ -188,128 +245,367 @@ class MainActivity : Activity() {
         val outer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(8), dp(10), dp(10))
+            setPadding(dp(10), dp(5), dp(10), dp(9))
             setBackgroundColor(Color.BLACK)
         }
 
-        val attach = iconButton(R.drawable.ic_attach, "Додати файл")
-        attach.setOnClickListener { chooseAttachments() }
+        val attach = iconButton(R.drawable.ic_plus, "Додати")
+        attach.background = rounded(Color.rgb(34, 34, 34), 24)
+        attach.setPadding(dp(12), dp(12), dp(12), dp(12))
+        attach.setOnClickListener { showAttachmentSheet() }
         outer.addView(attach, LinearLayout.LayoutParams(dp(48), dp(48)))
-
-        val mic = iconButton(R.drawable.ic_mic, "Голос")
-        mic.setOnClickListener { startVoice() }
-        outer.addView(mic, LinearLayout.LayoutParams(dp(48), dp(48)))
 
         input = EditText(this).apply {
             hint = "Повідомлення NEXUS"
-            setHintTextColor(Color.rgb(130, 130, 130))
+            setHintTextColor(Color.rgb(145, 145, 145))
             setTextColor(Color.WHITE)
             textSize = 16f
-            maxLines = 5
-            setPadding(dp(16), 0, dp(12), 0)
-            background = rounded(Color.rgb(28, 28, 28), 22)
+            maxLines = 4
+            minLines = 1
+            setPadding(dp(16), 0, dp(10), 0)
+            background = rounded(Color.rgb(31, 31, 31), 24)
         }
         outer.addView(input, LinearLayout.LayoutParams(0, dp(52), 1f).apply {
-            marginStart = dp(4)
-            marginEnd = dp(8)
+            marginStart = dp(8)
+            marginEnd = dp(6)
         })
+
+        val mic = iconButton(R.drawable.ic_mic, "Голос")
+        mic.setOnClickListener { startVoice() }
+        outer.addView(mic, LinearLayout.LayoutParams(dp(44), dp(44)))
 
         val send = ImageButton(this).apply {
             setImageResource(R.drawable.ic_send)
             contentDescription = "Надіслати"
-            background = rounded(Color.WHITE, 24)
-            setPadding(dp(12), dp(12), dp(12), dp(12))
+            background = rounded(Color.WHITE, 23)
+            setPadding(dp(11), dp(11), dp(11), dp(11))
         }
         send.setOnClickListener { sendCurrent() }
-        outer.addView(send, LinearLayout.LayoutParams(dp(48), dp(48)))
+        outer.addView(send, LinearLayout.LayoutParams(dp(46), dp(46)))
         return outer
     }
 
-    private fun restoreChat() {
-        messages.clear()
-        messages += store.load()
-        if (messages.isEmpty()) {
-            addAssistant(
-                "NEXUS працює локально. Для повного офлайн-чату вибери .litertlm модель кнопкою у верхній панелі. " +
-                    "Системні дії, пошук файлів у дозволених папках і читання доступного тексту екрана працюють без моделі.",
-                persist = true
-            )
+    private fun renderActiveChat() {
+        chatContainer.removeAllViews()
+        if (activeChat.messages.isEmpty()) {
+            val welcome = TextView(this).apply {
+                text = "Чим допомогти?"
+                setTextColor(Color.WHITE)
+                textSize = 26f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setPadding(dp(20), dp(120), dp(20), dp(24))
+            }
+            chatContainer.addView(welcome, LinearLayout.LayoutParams(-1, -2))
+            val hint = TextView(this).apply {
+                text = "Пиши, говори, додавай фото, відео, файли або екран."
+                setTextColor(Color.rgb(150, 150, 150))
+                textSize = 14f
+                gravity = Gravity.CENTER
+            }
+            chatContainer.addView(hint, LinearLayout.LayoutParams(-1, -2))
         } else {
-            messages.forEach { addMessageView(it.role, it.text, it.attachmentNames) }
+            activeChat.messages.forEach { addMessageView(it.role, it.text, it.attachmentNames) }
+        }
+        scrollBottom()
+    }
+
+    private fun newChat() {
+        val chat = conversationStore.create()
+        chats.add(0, chat)
+        activeChat = chat
+        conversationStore.setActive(chat.id)
+        saveChats()
+        renderActiveChat()
+    }
+
+    private fun switchChat(id: String) {
+        chats.firstOrNull { it.id == id }?.let {
+            activeChat = it
+            conversationStore.setActive(it.id)
+            renderActiveChat()
         }
     }
 
-    private fun loadSavedModel() {
-        modelStatus.text = "OFFLINE · модель перевіряється"
-        llm.loadSaved { ok, message ->
-            modelStatus.text = if (ok) "OFFLINE · LOCAL AI" else "OFFLINE · CORE"
-            if (!ok && !message.contains("ще не вибрана")) addAssistant(message)
+    private fun deleteChat(id: String) {
+        if (chats.size <= 1) {
+            val replacement = conversationStore.create()
+            chats.clear()
+            chats.add(replacement)
+            activeChat = replacement
+        } else {
+            chats.removeAll { it.id == id }
+            if (activeChat.id == id) activeChat = chats.first()
+        }
+        conversationStore.setActive(activeChat.id)
+        saveChats()
+        renderActiveChat()
+    }
+
+    private fun saveChats() {
+        activeChat.updatedAt = System.currentTimeMillis()
+        conversationStore.save(chats)
+    }
+
+    private fun showChatDrawer() {
+        hideKeyboard()
+        val dialog = Dialog(this)
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(18), dp(12), dp(12))
+            background = ColorDrawable(Color.rgb(31, 31, 31))
+        }
+
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val title = TextView(this).apply {
+            text = "NEXUS"
+            setTextColor(Color.WHITE)
+            textSize = 25f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        header.addView(title, LinearLayout.LayoutParams(0, dp(52), 1f))
+        val close = iconButton(R.drawable.ic_close, "Закрити")
+        close.setOnClickListener { dialog.dismiss() }
+        header.addView(close, LinearLayout.LayoutParams(dp(48), dp(48)))
+        panel.addView(header)
+
+        val create = drawerRow(R.drawable.ic_plus, "Новий чат")
+        create.setOnClickListener {
+            newChat()
+            dialog.dismiss()
+        }
+        panel.addView(create, LinearLayout.LayoutParams(-1, dp(58)))
+
+        val chatsTitle = TextView(this).apply {
+            text = "Чати"
+            setTextColor(Color.rgb(160, 160, 160))
+            textSize = 12f
+            setPadding(dp(10), dp(16), 0, dp(8))
+        }
+        panel.addView(chatsTitle)
+
+        val scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false }
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        chats.sortedByDescending { it.updatedAt }.forEach { chat ->
+            val item = TextView(this).apply {
+                text = chat.title
+                setTextColor(Color.WHITE)
+                textSize = 16f
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(14), 0, dp(10), 0)
+                background = if (chat.id == activeChat.id) rounded(Color.rgb(67, 67, 67), 12) else null
+                setOnClickListener {
+                    switchChat(chat.id)
+                    dialog.dismiss()
+                }
+                setOnLongClickListener {
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("Видалити чат?")
+                        .setMessage(chat.title)
+                        .setPositiveButton("Видалити") { _, _ ->
+                            deleteChat(chat.id)
+                            dialog.dismiss()
+                        }
+                        .setNegativeButton("Скасувати", null)
+                        .show()
+                    true
+                }
+            }
+            list.addView(item, LinearLayout.LayoutParams(-1, dp(54)).apply { bottomMargin = dp(4) })
+        }
+        scroll.addView(list, FrameLayout.LayoutParams(-1, -2))
+        panel.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        val functions = drawerRow(R.drawable.ic_functions, "Функції NEXUS")
+        functions.setOnClickListener {
+            dialog.dismiss()
+            showFeatureSettings()
+        }
+        panel.addView(functions, LinearLayout.LayoutParams(-1, dp(58)))
+
+        val models = drawerRow(R.drawable.ic_model, "Моделі")
+        models.setOnClickListener {
+            dialog.dismiss()
+            showModelManager()
+        }
+        panel.addView(models, LinearLayout.LayoutParams(-1, dp(58)))
+
+        val settings = drawerRow(R.drawable.ic_settings, "Налаштування")
+        settings.setOnClickListener {
+            dialog.dismiss()
+            showSettings()
+        }
+        panel.addView(settings, LinearLayout.LayoutParams(-1, dp(58)))
+
+        dialog.setContentView(panel)
+        dialog.setCanceledOnTouchOutside(true)
+        dialog.show()
+        dialog.window?.let { w ->
+            w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            w.setDimAmount(0.55f)
+            w.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            w.setGravity(Gravity.START)
+            w.setLayout((resources.displayMetrics.widthPixels * 0.84f).toInt(), WindowManager.LayoutParams.MATCH_PARENT)
         }
     }
 
-    private fun chooseAttachments() {
+    private fun drawerRow(icon: Int, label: String): LinearLayout {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), 0, dp(8), 0)
+        }
+        val image = ImageButton(this).apply {
+            setImageResource(icon)
+            background = null
+            isClickable = false
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+        }
+        row.addView(image, LinearLayout.LayoutParams(dp(48), dp(48)))
+        val text = TextView(this).apply {
+            this.text = label
+            setTextColor(Color.WHITE)
+            textSize = 17f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        row.addView(text, LinearLayout.LayoutParams(0, -1, 1f))
+        return row
+    }
+
+    private fun showAttachmentSheet() {
+        hideKeyboard()
+        val dialog = Dialog(this)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(14), dp(18), dp(18))
+            background = rounded(Color.rgb(45, 45, 45), 28)
+        }
+
+        val title = TextView(this).apply {
+            text = "Додати"
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setPadding(dp(8), 0, 0, dp(8))
+        }
+        box.addView(title)
+
+        fun add(icon: Int, label: String, action: () -> Unit) {
+            val row = drawerRow(icon, label)
+            row.setOnClickListener {
+                dialog.dismiss()
+                action()
+            }
+            box.addView(row, LinearLayout.LayoutParams(-1, dp(62)))
+        }
+
+        add(R.drawable.ic_camera, "Камера") { openCamera() }
+        add(R.drawable.ic_image, "Фото") { openPhotoPicker() }
+        add(R.drawable.ic_video, "Відео") { openVideoPicker() }
+        add(R.drawable.ic_file, "Файли") { openFilePicker() }
+        add(R.drawable.ic_screen, "Екран") { onScreenButton() }
+
+        dialog.setContentView(box)
+        dialog.setCanceledOnTouchOutside(true)
+        dialog.show()
+        dialog.window?.let { w ->
+            w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            w.setDimAmount(0.45f)
+            w.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            w.setGravity(Gravity.BOTTOM)
+            w.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT)
+            w.decorView.setPadding(dp(10), 0, dp(10), dp(8))
+        }
+    }
+
+    private fun openPhotoPicker() {
+        val intent =
+            if (Build.VERSION.SDK_INT >= 33) Intent(MediaStore.ACTION_PICK_IMAGES).setType("image/*")
+            else Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "image/*"
+            }
+        startActivityForResult(intent, REQ_PHOTO)
+    }
+
+    private fun openVideoPicker() {
+        val intent =
+            if (Build.VERSION.SDK_INT >= 33) Intent(MediaStore.ACTION_PICK_IMAGES).setType("video/*")
+            else Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "video/*"
+            }
+        startActivityForResult(intent, REQ_VIDEO)
+    }
+
+    private fun openFilePicker() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "*/*"
             putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
         }
-        startActivityForResult(intent, REQ_ATTACH)
+        startActivityForResult(intent, REQ_FILES)
     }
 
-    private fun chooseModel() {
-        if (loadingModel) return
-        AlertDialog.Builder(this)
-            .setTitle("Локальна модель")
-            .setMessage(
-                "NEXUS використовує локальні моделі LiteRT-LM (.litertlm). Файл залишається на телефоні. " +
-                    "Сам додаток не має дозволу INTERNET."
-            )
-            .setPositiveButton("Вибрати модель") { _, _ ->
-                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "*/*"
-                }
-                startActivityForResult(intent, REQ_MODEL)
-            }
-            .setNegativeButton("Скасувати", null)
-            .show()
-    }
-
-    private fun chooseFolder() {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-            addFlags(
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
-                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
-            )
+    private fun openCamera() {
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "NEXUS_" + System.currentTimeMillis() + ".jpg")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
         }
-        startActivityForResult(intent, REQ_FOLDER)
+        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+        if (uri == null) {
+            addAssistant("Не вдалося створити файл для фото.")
+            return
+        }
+        pendingCameraUri = uri
+        val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+            putExtra(MediaStore.EXTRA_OUTPUT, uri)
+            addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        try {
+            startActivityForResult(intent, REQ_CAMERA)
+        } catch (_: Exception) {
+            addAssistant("На телефоні не знайдено доступної камери.")
+        }
     }
 
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode != RESULT_OK || data == null) return
+        if (resultCode != RESULT_OK) return
+
         when (requestCode) {
-            REQ_ATTACH -> importAttachments(data)
-            REQ_MODEL -> data.data?.let { importModel(it) }
-            REQ_FOLDER -> data.data?.let {
+            REQ_FILES -> {
+                if (data == null) return
+                val uris = mutableListOf<Uri>()
+                data.data?.let { uris += it }
+                data.clipData?.let { clip ->
+                    for (i in 0 until clip.itemCount) uris += clip.getItemAt(i).uri
+                }
+                importUris(uris.take(8))
+            }
+            REQ_PHOTO, REQ_VIDEO -> data?.data?.let { importUris(listOf(it)) }
+            REQ_CAMERA -> pendingCameraUri?.let {
+                importUris(listOf(it))
+                pendingCameraUri = null
+            }
+            REQ_MODEL -> data?.data?.let { importModel(it) }
+            REQ_FOLDER -> data?.data?.let {
                 fileIndex.addFolder(it)
-                addAssistant("Папку додано до локального пошуку. NEXUS бачить лише папки, які ти явно дозволив.")
+                addAssistant("Папку додано до локального пошуку.")
             }
         }
     }
 
-    private fun importAttachments(data: Intent) {
-        val uris = mutableListOf<Uri>()
-        data.data?.let { uris += it }
-        data.clipData?.let { clip ->
-            for (i in 0 until clip.itemCount) uris += clip.getItemAt(i).uri
-        }
+    private fun importUris(uris: List<Uri>) {
         if (uris.isEmpty()) return
         ioScope.launch {
             val imported = mutableListOf<NexusAttachment>()
-            uris.take(8).forEach { uri ->
+            uris.forEach { uri ->
                 try { imported += attachmentManager.importUri(uri) } catch (_: Exception) {}
             }
             withContext(Dispatchers.Main) {
@@ -319,41 +615,18 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun importModel(uri: Uri) {
-        loadingModel = true
-        modelStatus.text = "OFFLINE · імпорт моделі"
-        addAssistant("Імпортую локальну модель у приватне сховище NEXUS.")
-        ioScope.launch {
-            try {
-                val file = attachmentManager.importModel(uri)
-                withContext(Dispatchers.Main) {
-                    modelStatus.text = "OFFLINE · запуск моделі"
-                    llm.loadModel(file.absolutePath) { ok, msg ->
-                        loadingModel = false
-                        modelStatus.text = if (ok) "OFFLINE · LOCAL AI" else "OFFLINE · CORE"
-                        addAssistant(msg)
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    loadingModel = false
-                    modelStatus.text = "OFFLINE · CORE"
-                    addAssistant("Не вдалося імпортувати модель: " + (e.message ?: "невідома помилка"))
-                }
-            }
-        }
-    }
-
     private fun renderAttachmentStrip() {
         attachmentStrip.removeAllViews()
+        attachmentScroll.visibility = if (attachments.isEmpty()) View.GONE else View.VISIBLE
         attachments.forEachIndexed { index, a ->
             val chip = TextView(this).apply {
                 text = a.name
                 setTextColor(Color.WHITE)
                 textSize = 12f
                 gravity = Gravity.CENTER
-                setPadding(dp(12), 0, dp(12), 0)
-                background = rounded(Color.rgb(35, 35, 35), 14)
+                maxLines = 1
+                setPadding(dp(11), 0, dp(11), 0)
+                background = rounded(Color.rgb(40, 40, 40), 15)
                 setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_file, 0, R.drawable.ic_close, 0)
                 compoundDrawablePadding = dp(6)
                 setOnClickListener {
@@ -364,7 +637,7 @@ class MainActivity : Activity() {
                 }
             }
             attachmentStrip.addView(chip, LinearLayout.LayoutParams(-2, dp(36)).apply {
-                marginEnd = dp(8)
+                marginEnd = dp(7)
             })
         }
     }
@@ -375,36 +648,48 @@ class MainActivity : Activity() {
 
         val sentAttachments = attachments.toList()
         val names = sentAttachments.map { it.name }
-        addUser(if (text.isEmpty()) "Вкладення" else text, names)
+        val userText = if (text.isEmpty()) "Проаналізуй вкладення." else text
+
+        addUser(userText, names)
         input.setText("")
         attachments.clear()
         renderAttachmentStrip()
         hideKeyboard()
 
-        route(text, sentAttachments)
+        route(userText, sentAttachments)
     }
 
-    private fun route(raw: String, sentAttachments: List<NexusAttachment>) {
-        val text = raw.ifBlank { "Проаналізуй вкладення." }
+    private fun route(text: String, sentAttachments: List<NexusAttachment>) {
         val low = text.lowercase(Locale.ROOT)
 
         if (isFileSearch(low)) {
-            runFileSearch(text)
+            if (!feature("file_search")) addAssistant("Пошук файлів вимкнений у функціях NEXUS.")
+            else runFileSearch(text)
             return
         }
 
         if (isMemoryCommand(low)) {
-            handleMemory(text)
+            if (!feature("memory")) addAssistant("Локальна пам’ять вимкнена у функціях NEXUS.")
+            else handleMemory(text)
             return
         }
 
         if (isScreenQuestion(low)) {
-            handleScreenQuestion(text, sentAttachments)
+            if (!feature("screen_vision")) addAssistant("Аналіз екрана вимкнений у функціях NEXUS.")
+            else handleScreenQuestion(text, sentAttachments)
             return
         }
 
         if (looksLikeExplicitAction(low)) {
-            executeDeviceAction(text)
+            if (!feature("phone_control")) {
+                addAssistant("Керування телефоном вимкнене у функціях NEXUS.")
+                return
+            }
+            if (low.contains(" і потім ") && !feature("multistep")) {
+                addAssistant("MultiStep вимкнений у функціях NEXUS.")
+                return
+            }
+            confirmDeviceAction(text)
             return
         }
 
@@ -420,20 +705,22 @@ class MainActivity : Activity() {
             .replace(Regex("(?i)^знайди в телефоні"), "")
             .replace(Regex("(?i)^пошукай файл"), "")
             .trim()
+
         if (query.isEmpty()) {
-            addAssistant("Напиши, яку назву або частину назви файла шукати.")
+            addAssistant("Напиши назву або частину назви файла.")
             return
         }
+
         if (fileIndex.folderCount() == 0) {
-            addAssistant("Спочатку додай хоча б одну папку в Налаштуваннях NEXUS. Android не дозволяє тихо сканувати все сховище без твоєї згоди.")
+            addAssistant("Спочатку додай папку в Налаштуваннях NEXUS.")
             return
         }
-        addAssistant("Шукаю локально у дозволених папках…", persist = false)
+
         ioScope.launch {
             val hits = fileIndex.search(query)
             val answer =
-                if (hits.isEmpty()) "Нічого з «$query» у дозволених папках не знайдено."
-                else hits.joinToString(prefix = "Знайдено:\n", separator = "\n") { "• " + it.name }
+                if (hits.isEmpty()) "Нічого з «$query» не знайдено."
+                else hits.joinToString(prefix = "Знайдено:\n", separator = "\n") { it.name }
             withContext(Dispatchers.Main) { addAssistant(answer) }
         }
     }
@@ -444,14 +731,13 @@ class MainActivity : Activity() {
 
     private fun handleMemory(original: String) {
         val low = original.lowercase(Locale.ROOT)
-        val prefs = getSharedPreferences("nexus_memory", MODE_PRIVATE)
+        val memory = getSharedPreferences("nexus_memory", MODE_PRIVATE)
         if (low.contains("що ти пам")) {
-            val value = prefs.getString("note", null)
-            addAssistant(if (value.isNullOrBlank()) "Локальна пам’ять порожня." else "Пам’ятаю локально: $value")
+            val value = memory.getString("note", null)
+            addAssistant(if (value.isNullOrBlank()) "Локальна пам’ять порожня." else "Пам’ятаю: $value")
         } else {
-            val value = original.substringAfter(' ', "").trim()
-            prefs.edit().putString("note", value).apply()
-            addAssistant("Зберіг це тільки на телефоні.")
+            memory.edit().putString("note", original.substringAfter(' ', "").trim()).apply()
+            addAssistant("Зберіг локально.")
         }
     }
 
@@ -460,10 +746,9 @@ class MainActivity : Activity() {
             s.contains("подивися екран") || s.contains("переклади екран") || s.contains("розкажи що тут")
 
     private fun handleScreenQuestion(question: String, originalAttachments: List<NexusAttachment>) {
-        val service = NexusAccessibilityService.get()
-        val visibleText = service?.screenText().orEmpty()
-
+        val visibleText = NexusAccessibilityService.get()?.screenText().orEmpty()
         val media = originalAttachments.toMutableList()
+
         ScreenCaptureService.latestCapturePath?.let { path ->
             if (File(path).exists()) media += attachmentManager.fromScreen(path)
         }
@@ -472,21 +757,18 @@ class MainActivity : Activity() {
             val prompt = buildString {
                 append(question)
                 if (visibleText.isNotBlank()) {
-                    append("\n\nТекст, який Android Accessibility бачить на поточному екрані:\n")
+                    append("\n\nДоступний текст поточного екрана:\n")
                     append(visibleText)
                 }
                 if (media.none { it.kind == AttachmentKind.SCREEN }) {
-                    append("\n\nСкріншот не підключений. Аналізуй доступний текст екрана.")
+                    append("\n\nСкріншот не підключений. Використовуй доступний текст екрана.")
                 }
             }
             sendToLocalAi(prompt, media)
+        } else if (visibleText.isNotBlank()) {
+            addAssistant("На екрані:\n$visibleText")
         } else {
-            if (visibleText.isNotBlank()) {
-                if (question.lowercase().contains("переклади")) addAssistant(basicTranslate(visibleText))
-                else addAssistant("На екрані доступний такий текст:\n$visibleText")
-            } else {
-                addAssistant("Для візуального аналізу скріншота потрібна локальна мультимодальна .litertlm модель. Screen Capture можна ввімкнути кнопкою екрана або плиткою NEXUS Screen.")
-            }
+            addAssistant("Для візуального аналізу потрібна локальна мультимодальна модель.")
         }
     }
 
@@ -498,16 +780,16 @@ class MainActivity : Activity() {
         return starts.any { s.startsWith(it) } || s.contains(" і потім ")
     }
 
-    private fun executeDeviceAction(command: String) {
+    private fun confirmDeviceAction(command: String) {
         AlertDialog.Builder(this)
             .setTitle("Підтвердити дію")
-            .setMessage("NEXUS хоче виконати на телефоні:\n\n$command\n\nДія не буде виконана без твого підтвердження.")
-            .setPositiveButton("Підтвердити") { _, _ -> executeDeviceActionConfirmed(command) }
+            .setMessage(command)
+            .setPositiveButton("Підтвердити") { _, _ -> executeDeviceAction(command) }
             .setNegativeButton("Скасувати") { _, _ -> addAssistant("Дію скасовано.") }
             .show()
     }
 
-    private fun executeDeviceActionConfirmed(command: String) {
+    private fun executeDeviceAction(command: String) {
         val service = NexusAccessibilityService.get()
         if (service != null) {
             service.executeCommand(command) { result -> runOnUiThread { addAssistant(result) } }
@@ -518,12 +800,12 @@ class MainActivity : Activity() {
         if (action != null) {
             try {
                 startActivity(Intent(action))
-                addAssistant("Дію виконано. Для натискань, скролу та Show Me увімкни Screen Control у Налаштуваннях NEXUS.")
+                addAssistant("Системний розділ відкрито.")
             } catch (_: Exception) {
                 addAssistant("Android не дозволив виконати цю дію.")
             }
         } else {
-            addAssistant("Для цієї дії потрібен Screen Control. Увімкнути його можна в Налаштуваннях NEXUS.")
+            addAssistant("Для цієї дії увімкни Screen Control.")
         }
     }
 
@@ -532,7 +814,7 @@ class MainActivity : Activity() {
         s.contains("wifi") || s.contains("wi-fi") || s.contains("вайфай") -> Settings.ACTION_WIFI_SETTINGS
         s.contains("bluetooth") || s.contains("блютуз") -> Settings.ACTION_BLUETOOTH_SETTINGS
         s.contains("батаре") -> Settings.ACTION_BATTERY_SAVER_SETTINGS
-        s.contains("екран") || s.contains("яскрав") -> Settings.ACTION_DISPLAY_SETTINGS
+        s.contains("яскрав") || s.contains("налаштування екрана") -> Settings.ACTION_DISPLAY_SETTINGS
         s.contains("додатк") -> Settings.ACTION_APPLICATION_SETTINGS
         s.contains("налаштуван") -> Settings.ACTION_SETTINGS
         else -> null
@@ -540,10 +822,7 @@ class MainActivity : Activity() {
 
     private fun sendToLocalAi(prompt: String, sentAttachments: List<NexusAttachment>) {
         if (!llm.isLoaded) {
-            addAssistant(
-                "Повна локальна модель ще не вибрана. Натисни кнопку моделі у верхній панелі та імпортуй .litertlm. " +
-                    "Після цього чат працюватиме без інтернету."
-            )
+            addAssistant("Обери й завантаж локальну модель через кнопку моделі зверху.")
             return
         }
 
@@ -551,17 +830,18 @@ class MainActivity : Activity() {
             sentAttachments.filter { it.kind == AttachmentKind.TEXT }.forEach { a ->
                 val txt = attachmentManager.readText(a)
                 if (txt.isNotBlank()) {
-                    append("\n\nЛокальний файл «${a.name}»:\n")
+                    append("\n\nФайл «" + a.name + "»:\n")
                     append(txt)
                 }
             }
             sentAttachments.filter { it.kind == AttachmentKind.FILE }.forEach { a ->
-                append("\n\nДодано локальний файл «${a.name}» типу ${a.mime}.")
+                append("\n\nДодано файл «" + a.name + "» типу " + a.mime + ".")
             }
         }
 
         val assistantView = addStreamingAssistant()
         val buffer = StringBuilder()
+
         llm.send(
             prompt + fileContext,
             sentAttachments,
@@ -571,78 +851,282 @@ class MainActivity : Activity() {
                 scrollBottom()
             },
             onDone = {
-                val finalText = buffer.toString().ifBlank { "Модель не повернула текстової відповіді." }
+                val finalText = buffer.toString().ifBlank { "Модель не повернула відповіді." }
                 assistantView.text = finalText
-                messages += StoredMessage("assistant", finalText)
-                store.save(messages)
+                activeChat.messages += StoredMessage("assistant", finalText)
+                saveChats()
+                speakIfNeeded(finalText)
                 scrollBottom()
             },
             onError = { error ->
                 val finalText = "Помилка локальної моделі: $error"
                 assistantView.text = finalText
-                messages += StoredMessage("assistant", finalText)
-                store.save(messages)
+                activeChat.messages += StoredMessage("assistant", finalText)
+                saveChats()
                 scrollBottom()
             }
         )
     }
 
+    private fun showModelManager() {
+        hideKeyboard()
+        val dialog = Dialog(this)
+        val scroll = ScrollView(this)
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(18), dp(18), dp(22))
+            setBackgroundColor(Color.rgb(24, 24, 24))
+        }
+        scroll.addView(content, FrameLayout.LayoutParams(-1, -2))
+
+        fun render() {
+            content.removeAllViews()
+
+            val title = TextView(this).apply {
+                text = "Локальна модель"
+                setTextColor(Color.WHITE)
+                textSize = 24f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+            }
+            content.addView(title, LinearLayout.LayoutParams(-1, dp(48)))
+
+            val subtitle = TextView(this).apply {
+                text = "Завантаження потребує інтернету один раз. Після цього чат працює локально."
+                setTextColor(Color.rgb(160, 160, 160))
+                textSize = 13f
+                setPadding(0, 0, 0, dp(14))
+            }
+            content.addView(subtitle)
+
+            modelManager.models.forEach { spec ->
+                val card = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(16), dp(14), dp(16), dp(14))
+                    background = rounded(Color.rgb(37, 37, 37), 18)
+                }
+
+                val name = TextView(this).apply {
+                    text = spec.label + "  " + spec.sizeLabel
+                    setTextColor(Color.WHITE)
+                    textSize = 18f
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                }
+                card.addView(name)
+
+                val desc = TextView(this).apply {
+                    text = spec.description
+                    setTextColor(Color.rgb(175, 175, 175))
+                    textSize = 13f
+                    setPadding(0, dp(5), 0, dp(10))
+                }
+                card.addView(desc)
+
+                val downloaded = modelManager.isDownloaded(spec)
+                val selected = modelManager.selectedId() == spec.id
+                val state = modelManager.query(spec)
+                val running = !downloaded && state != null &&
+                    (state.status == DownloadManager.STATUS_RUNNING || state.status == DownloadManager.STATUS_PENDING)
+
+                val status = TextView(this).apply {
+                    setTextColor(Color.rgb(165, 165, 165))
+                    textSize = 12f
+                    text = when {
+                        downloaded && selected -> "Завантажена · активна"
+                        downloaded -> "Завантажена"
+                        running -> {
+                            val pct = if (state!!.total > 0) (state.downloaded * 100 / state.total) else -1
+                            if (pct >= 0) "Завантаження $pct%" else "Завантаження"
+                        }
+                        state?.status == DownloadManager.STATUS_FAILED -> "Завантаження не вдалося"
+                        else -> "Не завантажена"
+                    }
+                }
+                card.addView(status, LinearLayout.LayoutParams(-1, dp(28)))
+
+                val button = Button(this).apply {
+                    isAllCaps = false
+                    text = when {
+                        downloaded && selected -> "Активна"
+                        downloaded -> "Використовувати"
+                        running -> "Завантажується"
+                        else -> "Завантажити"
+                    }
+                    isEnabled = !(downloaded && selected) && !running
+                    setOnClickListener {
+                        if (downloaded) {
+                            useModel(spec, dialog)
+                        } else {
+                            AlertDialog.Builder(this@MainActivity)
+                                .setTitle("Завантажити " + spec.label + "?")
+                                .setMessage(spec.sizeLabel + ". Модель буде збережена тільки для NEXUS.")
+                                .setPositiveButton("Завантажити") { _, _ ->
+                                    try {
+                                        modelManager.startDownload(spec)
+                                        render()
+                                    } catch (e: Exception) {
+                                        addAssistant("Не вдалося почати завантаження: " + (e.message ?: "помилка"))
+                                    }
+                                }
+                                .setNegativeButton("Скасувати", null)
+                                .show()
+                        }
+                    }
+                }
+                card.addView(button, LinearLayout.LayoutParams(-1, dp(50)))
+                content.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
+            }
+
+            val own = Button(this).apply {
+                text = "Імпортувати свою .litertlm"
+                isAllCaps = false
+                setOnClickListener {
+                    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "*/*"
+                    }
+                    startActivityForResult(intent, REQ_MODEL)
+                    dialog.dismiss()
+                }
+            }
+            content.addView(own, LinearLayout.LayoutParams(-1, dp(54)))
+
+            val close = Button(this).apply {
+                text = "Закрити"
+                isAllCaps = false
+                setOnClickListener { dialog.dismiss() }
+            }
+            content.addView(close, LinearLayout.LayoutParams(-1, dp(54)).apply { topMargin = dp(6) })
+
+            content.postDelayed({
+                if (dialog.isShowing) render()
+            }, 1200)
+        }
+
+        dialog.setContentView(scroll)
+        dialog.show()
+        dialog.window?.let { w ->
+            w.setBackgroundDrawable(ColorDrawable(Color.rgb(24, 24, 24)))
+            w.setLayout((resources.displayMetrics.widthPixels * 0.94f).toInt(), (resources.displayMetrics.heightPixels * 0.82f).toInt())
+            w.setGravity(Gravity.CENTER)
+        }
+        render()
+    }
+
+    private fun useModel(spec: ModelSpec, dialog: Dialog?) {
+        val file = modelManager.modelFile(spec)
+        if (!file.exists()) return
+        loadingModel = true
+        updateHeader()
+        llm.loadModel(file.absolutePath) { ok, message ->
+            loadingModel = false
+            if (ok) modelManager.setSelected(spec)
+            updateHeader()
+            addAssistant(message)
+            if (ok) dialog?.dismiss()
+        }
+    }
+
+    private fun importModel(uri: Uri) {
+        loadingModel = true
+        updateHeader()
+        ioScope.launch {
+            try {
+                val file = attachmentManager.importModel(uri)
+                withContext(Dispatchers.Main) {
+                    llm.loadModel(file.absolutePath) { _, message ->
+                        loadingModel = false
+                        updateHeader()
+                        addAssistant(message)
+                    }
+                }
+            } catch (_: Exception) {
+                withContext(Dispatchers.Main) {
+                    loadingModel = false
+                    updateHeader()
+                    addAssistant("Не вдалося імпортувати модель.")
+                }
+            }
+        }
+    }
+
+    private fun loadSelectedModel() {
+        val selected = modelManager.selected()
+        if (selected != null && modelManager.isDownloaded(selected)) {
+            loadingModel = true
+            llm.loadModel(modelManager.modelFile(selected).absolutePath) { _, _ ->
+                loadingModel = false
+                updateHeader()
+            }
+        } else {
+            llm.loadSaved { _, _ -> updateHeader() }
+        }
+    }
+
     private fun onScreenButton() {
+        if (!feature("screen_vision")) {
+            addAssistant("Аналіз екрана вимкнений у функціях NEXUS.")
+            return
+        }
         if (!ScreenCaptureService.isRunning) {
             pendingScreenAttachment = true
             startActivity(Intent(this, CapturePermissionActivity::class.java))
-            return
+        } else {
+            pendingScreenAttachment = true
+            ScreenCaptureService.requestFreshCapture()
+            handler.postDelayed({ attachLatestScreen() }, 600)
         }
-        pendingScreenAttachment = true
-        ScreenCaptureService.requestFreshCapture()
-        handler.postDelayed({ attachLatestScreen() }, 650)
     }
 
     private fun attachLatestScreen() {
         val path = ScreenCaptureService.latestCapturePath
         if (path != null && File(path).exists()) {
-            val existing = attachments.indexOfFirst { it.kind == AttachmentKind.SCREEN }
-            if (existing >= 0) attachments.removeAt(existing)
+            attachments.removeAll { it.kind == AttachmentKind.SCREEN }
             attachments += attachmentManager.fromScreen(path)
             renderAttachmentStrip()
             pendingScreenAttachment = false
-            Toast.makeText(this, "Скріншот додано до повідомлення", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Екран додано", Toast.LENGTH_SHORT).show()
         } else if (ScreenCaptureService.isRunning) {
-            handler.postDelayed({ attachLatestScreen() }, 600)
+            handler.postDelayed({ attachLatestScreen() }, 500)
         }
     }
+
+    private fun showFeatureSettings() {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(8), dp(22), dp(8))
+        }
+        addFeatureSwitch(box, "Аналіз екрана", "screen_vision")
+        addFeatureSwitch(box, "Керування телефоном", "phone_control")
+        addFeatureSwitch(box, "MultiStep", "multistep")
+        addFeatureSwitch(box, "Пошук локальних файлів", "file_search")
+        addFeatureSwitch(box, "Локальна пам’ять", "memory")
+
+        AlertDialog.Builder(this)
+            .setTitle("Функції NEXUS")
+            .setView(box)
+            .setNegativeButton("Готово", null)
+            .show()
+    }
+
+    private fun addFeatureSwitch(parent: LinearLayout, label: String, key: String) {
+        val sw = Switch(this).apply {
+            text = label
+            isChecked = feature(key)
+            setOnCheckedChangeListener { _, checked -> prefs.edit().putBoolean("feature_$key", checked).apply() }
+        }
+        parent.addView(sw, LinearLayout.LayoutParams(-1, dp(54)))
+    }
+
+    private fun feature(key: String): Boolean = prefs.getBoolean("feature_$key", true)
 
     private fun showSettings() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(10), dp(20), dp(10))
+            setPadding(dp(20), dp(8), dp(20), dp(8))
         }
-
-        fun addButton(label: String, action: () -> Unit) {
-            val b = Button(this).apply {
-                text = label
-                isAllCaps = false
-                setOnClickListener { action() }
-            }
-            box.addView(b, LinearLayout.LayoutParams(-1, dp(54)).apply { bottomMargin = dp(6) })
-        }
-
-        val info = TextView(this).apply {
-            setTextColor(Color.DKGRAY)
-            textSize = 14f
-            text = buildString {
-                append("Режим: повністю локальний\n")
-                append("Internet permission: відсутній\n")
-                append("Local AI: ").append(if (llm.isLoaded) "активний" else "модель не вибрана").append("\n")
-                append("Screen Control: ").append(if (NexusAccessibilityService.isEnabled()) "увімкнений" else "вимкнений").append("\n")
-                append("Screen Capture: ").append(if (ScreenCaptureService.isRunning) "активний" else "вимкнений").append("\n")
-                append("Папок для пошуку: ").append(fileIndex.folderCount())
-            }
-        }
-        box.addView(info, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
 
         val languageFilter = Switch(this).apply {
-            text = "Цензура лексики"
+            text = "Фільтр матів"
             isChecked = prefs.getBoolean("language_filter", false)
             setOnCheckedChangeListener { _, checked ->
                 prefs.edit().putBoolean("language_filter", checked).apply()
@@ -651,56 +1135,75 @@ class MainActivity : Activity() {
         }
         box.addView(languageFilter, LinearLayout.LayoutParams(-1, dp(54)))
 
-        val confirmActions = Switch(this).apply {
-            text = "Завжди підтверджувати дії на телефоні"
+        val speak = Switch(this).apply {
+            text = "Озвучувати відповіді"
+            isChecked = prefs.getBoolean("speak_replies", false)
+            setOnCheckedChangeListener { _, checked -> prefs.edit().putBoolean("speak_replies", checked).apply() }
+        }
+        box.addView(speak, LinearLayout.LayoutParams(-1, dp(54)))
+
+        val voice = Button(this).apply {
+            text = "Голос NEXUS"
+            isAllCaps = false
+            setOnClickListener { chooseTtsVoice() }
+        }
+        box.addView(voice, LinearLayout.LayoutParams(-1, dp(52)))
+
+        val confirm = Switch(this).apply {
+            text = "Підтверджувати дії на телефоні"
             isChecked = true
             isEnabled = false
         }
-        box.addView(confirmActions, LinearLayout.LayoutParams(-1, dp(54)))
+        box.addView(confirm, LinearLayout.LayoutParams(-1, dp(54)))
 
-        val safetyNote = TextView(this).apply {
-            text = "Цензура лексики стосується лише стилю відповідей. Захист від небезпечних дій та обов’язкове підтвердження не вимикаються."
-            setTextColor(Color.DKGRAY)
-            textSize = 12f
-            setPadding(0, 0, 0, dp(10))
+        fun addButton(label: String, action: () -> Unit) {
+            val b = Button(this).apply {
+                text = label
+                isAllCaps = false
+                setOnClickListener { action() }
+            }
+            box.addView(b, LinearLayout.LayoutParams(-1, dp(52)).apply { bottomMargin = dp(5) })
         }
-        box.addView(safetyNote, LinearLayout.LayoutParams(-1, -2))
 
+        addButton("Функції NEXUS") { showFeatureSettings() }
         addButton("Screen Control") { showAccessibilityDisclosure() }
         addButton("Додати папку для пошуку") { chooseFolder() }
         addButton("Додати NEXUS Screen у шторку") { requestTile() }
-        addButton(if (ScreenCaptureService.isRunning) "Зупинити захоплення екрана" else "Запустити захоплення екрана") {
-            if (ScreenCaptureService.isRunning) ScreenCaptureService.stop(this)
-            else {
-                pendingScreenAttachment = false
-                startActivity(Intent(this, CapturePermissionActivity::class.java))
-            }
+
+        val info = TextView(this).apply {
+            text = "Модель працює локально після завантаження. Мережа використовується тільки Model Manager для завантаження вибраної моделі."
+            setTextColor(Color.DKGRAY)
+            textSize = 12f
+            setPadding(0, dp(8), 0, 0)
         }
-        addButton("Очистити чат") {
-            messages.clear()
-            store.clear()
-            chatContainer.removeAllViews()
-            addAssistant("Новий локальний чат.", persist = true)
-        }
+        box.addView(info)
 
         AlertDialog.Builder(this)
-            .setTitle("NEXUS")
+            .setTitle("Налаштування")
             .setView(box)
             .setNegativeButton("Закрити", null)
             .show()
+    }
+
+    private fun chooseFolder() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+            addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+            )
+        }
+        startActivityForResult(intent, REQ_FOLDER)
     }
 
     private fun showAccessibilityDisclosure() {
         AlertDialog.Builder(this)
             .setTitle("Screen Control")
             .setMessage(
-                "Якщо ти ввімкнеш Screen Control, NEXUS зможе читати доступний текст поточного інтерфейсу " +
-                    "та виконувати натискання, скрол, Назад і Додому лише після твоєї команди. " +
-                    "NEXUS не має дозволу INTERNET і не надсилає вміст екрана на сервер."
+                "NEXUS зможе читати доступний текст інтерфейсу та виконувати натискання, скрол, Назад і Додому. " +
+                    "Кожна дія все одно потребує твого підтвердження."
             )
-            .setPositiveButton("Розумію, відкрити налаштування") { _, _ ->
-                getSharedPreferences("nexus_security", MODE_PRIVATE).edit()
-                    .putBoolean("accessibility_disclosure", true).apply()
+            .setPositiveButton("Відкрити налаштування") { _, _ ->
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             }
             .setNegativeButton("Скасувати", null)
@@ -717,10 +1220,10 @@ class MainActivity : Activity() {
                 Icon.createWithResource(this, R.drawable.ic_screen),
                 mainExecutor
             ) { result: Int ->
-                Toast.makeText(this, "Результат додавання плитки: $result", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Код: $result", Toast.LENGTH_SHORT).show()
             }
         } else {
-            Toast.makeText(this, "Відкрий редагування швидких налаштувань і додай NEXUS Screen.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Додай NEXUS Screen через редагування швидких налаштувань.", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -729,31 +1232,40 @@ class MainActivity : Activity() {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_AUDIO)
             return
         }
+
         if (Build.VERSION.SDK_INT < 31 || !SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
-            addAssistant("На цьому пристрої Android не повідомляє про доступний on-device розпізнавач мовлення. Текстовий чат працює повністю офлайн.")
+            addAssistant("На цьому телефоні Android не дає доступного on-device розпізнавання голосу.")
             return
         }
 
+        voiceReplyPending = true
         recognizer?.destroy()
         recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
         recognizer?.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) { input.hint = "Слухаю…" }
+            override fun onReadyForSpeech(params: Bundle?) { input.hint = "Слухаю" }
             override fun onBeginningOfSpeech() {}
             override fun onRmsChanged(rmsdB: Float) {}
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() { input.hint = "Повідомлення NEXUS" }
             override fun onError(error: Int) {
+                voiceReplyPending = false
                 input.hint = "Повідомлення NEXUS"
-                addAssistant("Не вдалося розпізнати голос локально.")
+                addAssistant("Не вдалося розпізнати голос.")
             }
             override fun onResults(results: Bundle?) {
                 input.hint = "Повідомлення NEXUS"
                 val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                if (!list.isNullOrEmpty()) input.setText(list[0])
+                if (!list.isNullOrEmpty()) {
+                    input.setText(list[0])
+                    input.setSelection(input.text.length)
+                }
             }
             override fun onPartialResults(partialResults: Bundle?) {
                 val list = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                if (!list.isNullOrEmpty()) input.setText(list[0])
+                if (!list.isNullOrEmpty()) {
+                    input.setText(list[0])
+                    input.setSelection(input.text.length)
+                }
             }
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
@@ -767,15 +1279,60 @@ class MainActivity : Activity() {
         recognizer?.startListening(intent)
     }
 
+    private fun initTts() {
+        tts = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                tts?.language = Locale("uk", "UA")
+                applyTtsVoice()
+            }
+        }
+    }
+
+    private fun availableVoices(): List<Voice> {
+        val engine = tts ?: return emptyList()
+        val all = engine.voices?.filter { !it.isNetworkConnectionRequired } ?: emptyList()
+        val uk = all.filter { it.locale.language.equals("uk", true) }
+        return (if (uk.isNotEmpty()) uk else all).sortedBy { it.name }.take(3)
+    }
+
+    private fun applyTtsVoice() {
+        val voices = availableVoices()
+        if (voices.isEmpty()) return
+        val index = prefs.getInt("tts_voice", 0).coerceIn(0, voices.lastIndex)
+        tts?.voice = voices[index]
+    }
+
+    private fun chooseTtsVoice() {
+        val voices = availableVoices()
+        if (voices.isEmpty()) {
+            Toast.makeText(this, "Немає доступних локальних голосів.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val labels = voices.mapIndexed { i, voice ->
+            "Голос " + (i + 1) + " · " + voice.locale.displayLanguage
+        }.toTypedArray()
+        val current = prefs.getInt("tts_voice", 0).coerceIn(0, voices.lastIndex)
+        AlertDialog.Builder(this)
+            .setTitle("Голос NEXUS")
+            .setSingleChoiceItems(labels, current) { dialog, which ->
+                prefs.edit().putInt("tts_voice", which).apply()
+                applyTtsVoice()
+                tts?.speak("Перевірка голосу NEXUS", TextToSpeech.QUEUE_FLUSH, null, "voice_test")
+                dialog.dismiss()
+            }
+            .show()
+    }
+
+    private fun speakIfNeeded(text: String) {
+        val should = voiceReplyPending || prefs.getBoolean("speak_replies", false)
+        voiceReplyPending = false
+        if (!should) return
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "nexus_reply")
+    }
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, results: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, results)
         if (requestCode == REQ_AUDIO && results.firstOrNull() == PackageManager.PERMISSION_GRANTED) startVoice()
-    }
-
-    private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 299)
-        }
     }
 
     private fun handleIncomingIntent(intent: Intent?) {
@@ -790,29 +1347,33 @@ class MainActivity : Activity() {
     }
 
     private fun addUser(text: String, attachmentNames: List<String> = emptyList()) {
+        if (activeChat.title == "Новий чат") {
+            activeChat.title = text.replace("\n", " ").take(42).ifBlank { "Чат" }
+        }
         addMessageView("user", text, attachmentNames)
-        messages += StoredMessage("user", text, attachmentNames)
-        store.save(messages)
+        activeChat.messages += StoredMessage("user", text, attachmentNames)
+        saveChats()
     }
 
     private fun addAssistant(text: String, persist: Boolean = true) {
         addMessageView("assistant", text, emptyList())
         if (persist) {
-            messages += StoredMessage("assistant", text)
-            store.save(messages)
+            activeChat.messages += StoredMessage("assistant", text)
+            saveChats()
         }
+        speakIfNeeded(text)
     }
 
     private fun addStreamingAssistant(): TextView {
         val row = messageRow(false)
         val bubble = TextView(this).apply {
-            setTextColor(Color.rgb(235, 235, 235))
+            setTextColor(Color.rgb(238, 238, 238))
             textSize = 16f
             setLineSpacing(0f, 1.08f)
             setPadding(dp(14), dp(10), dp(14), dp(10))
-            background = rounded(Color.rgb(16, 16, 16), 17)
+            background = rounded(Color.rgb(18, 18, 18), 18)
         }
-        row.addView(bubble, LinearLayout.LayoutParams(0, -2, 0.92f))
+        row.addView(bubble, LinearLayout.LayoutParams(0, -2, 0.94f))
         chatContainer.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
         scrollBottom()
         return bubble
@@ -825,32 +1386,31 @@ class MainActivity : Activity() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(10), dp(14), dp(10))
-            background = rounded(if (user) Color.rgb(42, 42, 42) else Color.rgb(16, 16, 16), 17)
+            background = rounded(if (user) Color.rgb(47, 47, 47) else Color.rgb(18, 18, 18), 18)
         }
 
-        if (attachmentNames.isNotEmpty()) {
-            attachmentNames.forEach { name ->
-                val attachment = TextView(this).apply {
-                    setTextColor(Color.rgb(190, 190, 190))
-                    textSize = 12f
-                    this.text = name
-                    setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_file, 0, 0, 0)
-                    compoundDrawablePadding = dp(6)
-                }
-                box.addView(attachment, LinearLayout.LayoutParams(-1, dp(28)))
+        attachmentNames.forEach { name ->
+            val attachment = TextView(this).apply {
+                this.text = name
+                setTextColor(Color.rgb(190, 190, 190))
+                textSize = 12f
+                maxLines = 1
+                setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_file, 0, 0, 0)
+                compoundDrawablePadding = dp(6)
             }
+            box.addView(attachment, LinearLayout.LayoutParams(-1, dp(28)))
         }
 
         val body = TextView(this).apply {
             this.text = text
-            setTextColor(Color.rgb(240, 240, 240))
+            setTextColor(Color.rgb(242, 242, 242))
             textSize = 16f
             setTextIsSelectable(true)
             setLineSpacing(0f, 1.08f)
         }
         box.addView(body, LinearLayout.LayoutParams(-1, -2))
 
-        row.addView(box, LinearLayout.LayoutParams(0, -2, if (user) 0.82f else 0.92f))
+        row.addView(box, LinearLayout.LayoutParams(0, -2, if (user) 0.84f else 0.94f))
         chatContainer.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
         scrollBottom()
     }
@@ -858,54 +1418,31 @@ class MainActivity : Activity() {
     private fun messageRow(user: Boolean): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = if (user) Gravity.END else Gravity.START
-        if (user) setPadding(dp(54), 0, 0, 0) else setPadding(0, 0, dp(28), 0)
+        if (user) setPadding(dp(52), 0, 0, 0) else setPadding(0, 0, dp(20), 0)
     }
 
     private fun updateHeader() {
         modelStatus.text = when {
-            llm.isLoaded -> "OFFLINE · LOCAL AI"
-            loadingModel -> "OFFLINE · модель завантажується"
-            else -> "OFFLINE · CORE"
+            loadingModel -> "OFFLINE · завантаження моделі"
+            llm.isLoaded -> {
+                val selected = modelManager.selected()
+                if (selected != null) "OFFLINE · " + selected.label.uppercase(Locale.ROOT)
+                else "OFFLINE · LOCAL AI"
+            }
+            else -> "OFFLINE · обери модель"
         }
-        screenButton.alpha = if (ScreenCaptureService.isRunning) 1f else 0.65f
-    }
-
-    private fun basicTranslate(text: String): String {
-        val dictionary = linkedMapOf(
-            "settings" to "налаштування",
-            "storage" to "пам’ять",
-            "battery" to "батарея",
-            "display" to "екран",
-            "sound" to "звук",
-            "notifications" to "сповіщення",
-            "privacy" to "конфіденційність",
-            "security" to "безпека",
-            "network" to "мережа",
-            "apps" to "додатки",
-            "permissions" to "дозволи",
-            "camera" to "камера",
-            "microphone" to "мікрофон",
-            "files" to "файли",
-            "delete" to "видалити",
-            "save" to "зберегти",
-            "open" to "відкрити",
-            "back" to "назад",
-            "search" to "пошук"
-        )
-        var out = text
-        dictionary.forEach { (en, uk) ->
-            out = out.replace(Regex("(?i)\\b" + Regex.escape(en) + "\\b"), uk)
-        }
-        return if (out == text) "Для повного перекладу екрана завантаж локальну мовну модель.\n\n$text" else out
+        screenButton.alpha = if (ScreenCaptureService.isRunning) 1f else 0.62f
     }
 
     private fun hideKeyboard() {
-        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
-            .hideSoftInputFromWindow(input.windowToken, 0)
+        if (::input.isInitialized) {
+            (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+                .hideSoftInputFromWindow(input.windowToken, 0)
+        }
     }
 
     private fun scrollBottom() {
-        handler.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
+        if (::chatScroll.isInitialized) handler.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
     }
 
     private fun iconButton(drawable: Int, description: String): ImageButton = ImageButton(this).apply {
@@ -920,6 +1457,5 @@ class MainActivity : Activity() {
         cornerRadius = dp(radiusDp).toFloat()
     }
 
-    private fun dp(value: Int): Int =
-        (value * resources.displayMetrics.density + 0.5f).toInt()
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density + 0.5f).toInt()
 }
