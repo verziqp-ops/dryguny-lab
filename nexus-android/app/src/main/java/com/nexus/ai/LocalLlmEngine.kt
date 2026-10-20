@@ -322,6 +322,10 @@ class LocalLlmEngine(private val context: Context) {
             onError("Модель ще не готова.")
             return
         }
+        if (isGenerating) {
+            onError("NEXUS уже генерує відповідь.")
+            return
+        }
 
         scope.launch {
             val generated = StringBuilder()
@@ -454,6 +458,7 @@ class LocalLlmEngine(private val context: Context) {
             return
         }
 
+        isGenerating = true
         scope.launch {
             var temp: Conversation? = null
             try {
@@ -490,11 +495,13 @@ class LocalLlmEngine(private val context: Context) {
                         }
 
                         override fun onDone() {
+                            isGenerating = false
                             try { conv.close() } catch (_: Throwable) {}
                             main.post { onDone() }
                         }
 
                         override fun onError(throwable: Throwable) {
+                            isGenerating = false
                             try { conv.close() } catch (_: Throwable) {}
                             main.post { onError(friendlyError(throwable)) }
                         }
@@ -511,6 +518,7 @@ class LocalLlmEngine(private val context: Context) {
                     ),
                 )
             } catch (e: Throwable) {
+                isGenerating = false
                 try { temp?.close() } catch (_: Throwable) {}
                 main.post { onError(friendlyError(e)) }
             }
