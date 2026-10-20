@@ -594,7 +594,7 @@ class MainActivity : Activity() {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(18), dp(12), dp(12))
-            background = glassDrawable(0, 54, 62)
+            setBackgroundColor(Color.rgb(33, 33, 33))
         }
 
         val header = LinearLayout(this).apply {
@@ -701,7 +701,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(8), 0, dp(8), 0)
-            background = glassDrawable(16, 12, 18)
+            background = null
             addPressAnimation(this)
         }
         val image = ImageButton(this).apply {
@@ -728,7 +728,7 @@ class MainActivity : Activity() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(14), dp(18), dp(18))
-            background = glassDrawable(28, 62, 76)
+            background = rounded(Color.rgb(47, 47, 47), 28)
         }
 
         val title = TextView(this).apply {
@@ -2136,7 +2136,11 @@ class MainActivity : Activity() {
 
     private fun updateHeader() {
         modelStatus.text = when {
-            loadingModel -> "OFFLINE · завантаження моделі"
+            loadingModel -> {
+                val selected = modelManager.selected()
+                if (selected != null) "OFFLINE · " + selected.label.uppercase(Locale.ROOT) + " · готується"
+                else "OFFLINE · готується"
+            }
             llm.isLoaded -> {
                 val selected = modelManager.selected()
                 if (selected != null) "OFFLINE · " + selected.label.uppercase(Locale.ROOT)
@@ -2144,7 +2148,9 @@ class MainActivity : Activity() {
             }
             else -> "OFFLINE · обери модель"
         }
-        screenButton.alpha = if (ScreenCaptureService.isRunning) 1f else 0.62f
+        if (::screenButton.isInitialized) {
+            screenButton.alpha = if (ScreenCaptureService.isRunning) 1f else 0.62f
+        }
     }
 
     private fun hideKeyboard() {
