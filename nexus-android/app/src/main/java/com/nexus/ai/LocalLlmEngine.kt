@@ -29,6 +29,9 @@ class LocalLlmEngine(private val context: Context) {
         private set
     var modelPath: String? = null
         private set
+    @Volatile private var languageFilter: Boolean =
+        context.getSharedPreferences("nexus_settings", Context.MODE_PRIVATE)
+            .getBoolean("language_filter", false)
 
     fun loadModel(path: String, onDone: (Boolean, String) -> Unit) {
         scope.launch {
@@ -79,13 +82,8 @@ class LocalLlmEngine(private val context: Context) {
                 }
             val newEngine = Engine(config)
             newEngine.initialize()
-            val systemText =
-                "You are NEXUS, a private on-device Android assistant. " +
-                "Answer in the user's language. Be concise and useful. " +
-                "Never claim an Android action was executed unless the app reports that it succeeded. " +
-                "The user may attach screenshots, images, audio, video frames, and local files."
             val newConversation = newEngine.createConversation(
-                ConversationConfig(systemInstruction = Contents.of(Content.Text(systemText)))
+                ConversationConfig(systemInstruction = Contents.of(Content.Text(systemInstruction())))
             )
             engine = newEngine
             conversation = newConversation
@@ -98,6 +96,36 @@ class LocalLlmEngine(private val context: Context) {
             }
             throw e
         }
+    }
+
+    fun setLanguageFilter(enabled: Boolean) {
+        languageFilter = enabled
+        context.getSharedPreferences("nexus_settings", Context.MODE_PRIVATE)
+            .edit().putBoolean("language_filter", enabled).apply()
+        val activeEngine = engine ?: return
+        scope.launch {
+            try {
+                conversation?.close()
+                conversation = activeEngine.createConversation(
+                    ConversationConfig(systemInstruction = Contents.of(Content.Text(systemInstruction())))
+                )
+            } catch (_: Throwable) {}
+        }
+    }
+
+    private fun systemInstruction(): String {
+        val style =
+            if (languageFilter)
+                "Avoid profanity and unnecessarily explicit wording."
+            else
+                "Do not censor ordinary profanity or rude wording merely because it is offensive; use natural language when appropriate."
+        return "You are NEXUS, a private on-device Android assistant. " +
+            "Answer in the user's language. Be concise and useful. " +
+            style + " " +
+            "Do not provide instructions that meaningfully facilitate serious harm, malware, credential theft, illegal abuse, or bypassing safety protections. " +
+            "Never claim an Android action was executed unless the app reports that it succeeded. " +
+            "Every action that changes the phone must be confirmed by the user in the app before execution. " +
+            "The user may attach screenshots, images, audio, video frames, and local files."
     }
 
     fun loadSaved(onDone: (Boolean, String) -> Unit) {
