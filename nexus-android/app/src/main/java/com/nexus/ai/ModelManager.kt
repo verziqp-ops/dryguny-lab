@@ -27,13 +27,13 @@ class ModelManager(private val context: Context) {
     val models = listOf(
         ModelSpec(
             id = "smart",
-            label = "Smart",
-            description = "Qwen3.5 2B INT8. Значно розумніша за старі Low/Medium, добра мультимовність і нормальна пам’ять діалогу.",
+            label = "Fast",
+            description = "Qwen3.5 2B INT8. Швидша й легша, але помітно слабша за Smart 4B.",
             sizeLabel = "≈1.97 ГБ",
             fileName = "Qwen3.5-2B_int8.litertlm",
             url = "https://huggingface.co/litert-community/Qwen3.5-2B/resolve/main/Qwen3.5-2B_int8.litertlm?download=true",
             expectedBytes = 2_119_744_416L,
-            recommended = true,
+            recommended = false,
         ),
         ModelSpec(
             id = "vision",
@@ -47,12 +47,13 @@ class ModelManager(private val context: Context) {
         ),
         ModelSpec(
             id = "max",
-            label = "Max",
-            description = "Qwen3.5 4B Mixed INT4. Найрозумніша з безпечних для Pixel 7 Pro варіантів, але повільніша.",
+            label = "Smart",
+            description = "Qwen3.5 4B Mixed INT4. Основна рекомендована модель: помітно розумніша за Fast 2B.",
             sizeLabel = "≈2.75 ГБ",
             fileName = "Qwen3.5-4B_mixed_int4.litertlm",
             url = "https://huggingface.co/litert-community/Qwen3.5-4B/resolve/main/Qwen3.5-4B_mixed_int4.litertlm?download=true",
             expectedBytes = 2_754_070_624L,
+            recommended = true,
         )
     )
 
@@ -61,6 +62,7 @@ class ModelManager(private val context: Context) {
 
     init {
         cleanupLegacyModelsOnce()
+        promoteSmart4BOnce()
     }
 
     fun modelFile(spec: ModelSpec): File {
@@ -212,6 +214,19 @@ class ModelManager(private val context: Context) {
                 if (selectedId() == spec.id) clearSelected()
             }
         }
+    }
+
+    private fun promoteSmart4BOnce() {
+        if (prefs.getBoolean("promoted_4b_v09", false)) return
+
+        val oldFastSelected = selectedId() == "smart"
+        val smart4b = models.firstOrNull { it.id == "max" }
+
+        if (oldFastSelected && smart4b != null && isDownloaded(smart4b)) {
+            setSelected(smart4b)
+        }
+
+        prefs.edit().putBoolean("promoted_4b_v09", true).apply()
     }
 
     private fun cleanupLegacyModelsOnce() {
