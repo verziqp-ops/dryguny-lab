@@ -38,13 +38,13 @@ jobs:
 
       - name: Align APK
         run: |
-          "$ANDROID_HOME/build-tools/36.0.0/zipalign" -f -p 4             nexus-android/app/build/outputs/apk/release/app-release-unsigned.apk             NexusAI-v0.3-aligned-unsigned.apk
+          "$ANDROID_HOME/build-tools/36.0.0/zipalign" -f -p 4             nexus-android/app/build/outputs/apk/release/app-release-unsigned.apk             NexusAI-v0.4-aligned-unsigned.apk
           cp "$ANDROID_HOME/build-tools/36.0.0/lib/apksigner.jar" ./apksigner.jar
 
       - uses: actions/upload-artifact@v4
         with:
-          name: NexusAI-v0.3-release-tools
+          name: NexusAI-v0.4-release-tools
           path: |
-            NexusAI-v0.3-aligned-unsigned.apk
+            NexusAI-v0.4-aligned-unsigned.apk
             apksigner.jar
           if-no-files-found: error
