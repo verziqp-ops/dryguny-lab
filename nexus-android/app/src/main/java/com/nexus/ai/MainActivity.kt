@@ -941,122 +941,267 @@ class MainActivity : Activity() {
 
     private fun showModelManager() {
         hideKeyboard()
+
         val dialog = Dialog(this)
-        val scroll = ScrollView(this)
+        val shell = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(14), dp(14), dp(12))
+            background = glassDrawable(30, 40, 54)
+        }
+
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(6), 0, 0, dp(8))
+        }
+        val titleBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val title = TextView(this).apply {
+            text = "Локальні моделі"
+            setTextColor(Color.WHITE)
+            textSize = 24f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        val subtitle = TextView(this).apply {
+            text = "Один раз завантажуєш — далі працює локально"
+            setTextColor(Color.rgb(170, 176, 186))
+            textSize = 12f
+        }
+        titleBox.addView(title)
+        titleBox.addView(subtitle)
+        header.addView(titleBox, LinearLayout.LayoutParams(0, -2, 1f))
+
+        val close = iconButton(R.drawable.ic_close, "Закрити").apply {
+            background = glassDrawable(22, 32, 44)
+            addPressAnimation(this)
+            setOnClickListener { dialog.dismiss() }
+        }
+        header.addView(close, LinearLayout.LayoutParams(dp(46), dp(46)))
+        shell.addView(header, LinearLayout.LayoutParams(-1, -2))
+
+        val scroll = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+        }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(18), dp(18), dp(22))
-            setBackgroundColor(Color.rgb(24, 24, 24))
+            setPadding(dp(2), dp(4), dp(2), dp(10))
         }
         scroll.addView(content, FrameLayout.LayoutParams(-1, -2))
+        shell.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        val footer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(10), dp(14), dp(11))
+            background = glassDrawable(22, 46, 68)
+            visibility = View.GONE
+        }
+        val footerText = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 13f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        val footerProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+            progressTintList = ColorStateList.valueOf(Color.WHITE)
+            progressBackgroundTintList = ColorStateList.valueOf(Color.argb(52, 255, 255, 255))
+        }
+        footer.addView(footerText, LinearLayout.LayoutParams(-1, dp(24)))
+        footer.addView(footerProgress, LinearLayout.LayoutParams(-1, dp(5)))
+        shell.addView(footer, LinearLayout.LayoutParams(-1, dp(62)).apply {
+            topMargin = dp(8)
+        })
+
+        var firstRender = true
+
+        fun deleteModel(spec: ModelSpec) {
+            AlertDialog.Builder(this)
+                .setTitle("Видалити " + spec.label + "?")
+                .setMessage("Файл моделі " + spec.sizeLabel + " буде видалено з телефона. Його можна завантажити знову.")
+                .setPositiveButton("Видалити") { _, _ ->
+                    val wasActive = modelManager.selectedId() == spec.id
+                    if (wasActive) {
+                        llm.close()
+                        loadingModel = false
+                        loadingModelId = null
+                    }
+                    modelManager.deleteModel(spec)
+                    updateHeader()
+                    render()
+                }
+                .setNegativeButton("Скасувати", null)
+                .show()
+        }
 
         fun render() {
             content.removeAllViews()
 
-            val title = TextView(this).apply {
-                text = "Локальна модель"
-                setTextColor(Color.WHITE)
-                textSize = 24f
-                typeface = android.graphics.Typeface.DEFAULT_BOLD
-            }
-            content.addView(title, LinearLayout.LayoutParams(-1, dp(48)))
-
-            val subtitle = TextView(this).apply {
-                text = "Завантаження потребує інтернету один раз. Після цього чат працює локально."
-                setTextColor(Color.rgb(160, 160, 160))
-                textSize = 13f
-                setPadding(0, 0, 0, dp(14))
-            }
-            content.addView(subtitle)
-
-            modelManager.models.forEach { spec ->
-                val card = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(dp(16), dp(14), dp(16), dp(14))
-                    background = rounded(Color.rgb(37, 37, 37), 18)
-                }
-
-                val name = TextView(this).apply {
-                    text = spec.label + (if (spec.recommended) " · Рекомендована" else "") + "  " + spec.sizeLabel
-                    setTextColor(Color.WHITE)
-                    textSize = 18f
-                    typeface = android.graphics.Typeface.DEFAULT_BOLD
-                }
-                card.addView(name)
-
-                val desc = TextView(this).apply {
-                    text = spec.description
-                    setTextColor(Color.rgb(175, 175, 175))
-                    textSize = 13f
-                    setPadding(0, dp(5), 0, dp(10))
-                }
-                card.addView(desc)
-
+            modelManager.models.forEachIndexed { index, spec ->
                 val downloaded = modelManager.isDownloaded(spec)
                 val selected = modelManager.selectedId() == spec.id
-                if (downloaded && modelManager.pendingActivationId() == spec.id && !loadingModel) {
-                    modelManager.clearPendingActivation()
-                    content.post { useModel(spec, dialog) }
-                }
                 val state = modelManager.query(spec)
                 val running = !downloaded && state != null &&
                     (state.status == DownloadManager.STATUS_RUNNING || state.status == DownloadManager.STATUS_PENDING)
+                val failed = state?.status == DownloadManager.STATUS_FAILED
                 val corruptFinished = !downloaded && state?.status == DownloadManager.STATUS_SUCCESSFUL
+                val starting = loadingModelId == spec.id
+
+                val card = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(16), dp(15), dp(16), dp(14))
+                    background = glassDrawable(
+                        radiusDp = 24,
+                        fillAlpha = if (selected) 58 else 34,
+                        strokeAlpha = if (selected) 92 else 42
+                    )
+                }
+
+                val top = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+
+                val name = TextView(this).apply {
+                    text = spec.label + if (spec.recommended) "  ·  Рекомендована" else ""
+                    setTextColor(Color.WHITE)
+                    textSize = 19f
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                }
+                top.addView(name, LinearLayout.LayoutParams(0, -2, 1f))
+
+                val size = TextView(this).apply {
+                    text = spec.sizeLabel
+                    setTextColor(Color.rgb(190, 197, 207))
+                    textSize = 12f
+                    setPadding(dp(10), dp(5), dp(10), dp(5))
+                    background = glassDrawable(14, 32, 38)
+                }
+                top.addView(size, LinearLayout.LayoutParams(-2, -2))
+                card.addView(top)
+
+                val desc = TextView(this).apply {
+                    text = spec.description
+                    setTextColor(Color.rgb(182, 187, 196))
+                    textSize = 13f
+                    setLineSpacing(0f, 1.08f)
+                    setPadding(0, dp(8), 0, dp(10))
+                }
+                card.addView(desc)
 
                 val status = TextView(this).apply {
-                    setTextColor(Color.rgb(165, 165, 165))
+                    setTextColor(
+                        when {
+                            selected -> Color.WHITE
+                            failed || corruptFinished -> Color.rgb(255, 160, 160)
+                            else -> Color.rgb(158, 166, 177)
+                        }
+                    )
                     textSize = 12f
                     text = when {
-                        downloaded && selected -> "Завантажена · активна"
+                        starting -> "Запускаю модель…"
+                        selected && llm.isLoaded -> "Активна зараз"
                         downloaded -> "Завантажена"
                         running -> {
-                            val pct = if (state!!.total > 0) (state.downloaded * 100 / state.total) else -1
-                            if (pct >= 0) "Завантаження $pct%" else "Завантаження"
+                            val pct = modelManager.downloadProgress(spec)
+                            if (pct != null) "Завантаження · " + pct + "%" else "Завантаження…"
                         }
-                        corruptFinished -> "Файл недокачаний або пошкоджений"
-                        state?.status == DownloadManager.STATUS_FAILED -> "Завантаження не вдалося"
+                        corruptFinished -> "Файл неповний або пошкоджений"
+                        failed -> "Завантаження не вдалося"
                         else -> "Не завантажена"
                     }
                 }
                 card.addView(status, LinearLayout.LayoutParams(-1, dp(28)))
 
-                val button = Button(this).apply {
-                    isAllCaps = false
-                    text = when {
-                        downloaded && selected -> "Активна"
-                        downloaded -> "Використовувати"
-                        running -> "Завантажується"
-                        corruptFinished -> "Завантажити знову"
-                        else -> "Завантажити"
-                    }
-                    isEnabled = !(downloaded && selected) && !running
+                val actions = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+
+                val actionLabel = when {
+                    starting -> "Запускаю…"
+                    selected && llm.isLoaded -> "Активна"
+                    downloaded -> "Використовувати"
+                    running -> "Завантажується"
+                    corruptFinished || failed -> "Завантажити знову"
+                    else -> "Завантажити"
+                }
+
+                val action = glassButton(
+                    actionLabel,
+                    primary = downloaded && !selected && !starting
+                ).apply {
+                    isEnabled = !starting && !(selected && llm.isLoaded) && !running
+                    alpha = if (isEnabled) 1f else 0.58f
                     setOnClickListener {
-                        if (downloaded) {
-                            useModel(spec, dialog)
-                        } else {
-                            AlertDialog.Builder(this@MainActivity)
-                                .setTitle("Завантажити " + spec.label + "?")
-                                .setMessage(spec.sizeLabel + ". Модель буде збережена тільки для NEXUS.")
-                                .setPositiveButton("Завантажити") { _, _ ->
-                                    try {
-                                        modelManager.startDownload(spec)
-                                        render()
-                                    } catch (e: Exception) {
-                                        addAssistant("Не вдалося почати завантаження: " + (e.message ?: "помилка"))
+                        when {
+                            downloaded -> {
+                                loadingModel = true
+                                loadingModelId = spec.id
+                                render()
+                                updateHeader()
+                                useModel(spec) { ok, message ->
+                                    if (!ok) {
+                                        Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
                                     }
+                                    render()
                                 }
-                                .setNegativeButton("Скасувати", null)
-                                .show()
+                            }
+                            else -> {
+                                AlertDialog.Builder(this@MainActivity)
+                                    .setTitle("Завантажити " + spec.label + "?")
+                                    .setMessage(spec.sizeLabel + ". Після завантаження модель працюватиме локально.")
+                                    .setPositiveButton("Завантажити") { _, _ ->
+                                        try {
+                                            modelManager.startDownload(spec)
+                                            render()
+                                        } catch (e: Exception) {
+                                            Toast.makeText(
+                                                this@MainActivity,
+                                                "Не вдалося почати завантаження",
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                        }
+                                    }
+                                    .setNegativeButton("Скасувати", null)
+                                    .show()
+                            }
                         }
                     }
                 }
-                card.addView(button, LinearLayout.LayoutParams(-1, dp(50)))
-                content.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
+                actions.addView(action, LinearLayout.LayoutParams(0, dp(50), 1f))
+
+                if (downloaded || running || corruptFinished || failed) {
+                    val secondary = glassButton(
+                        if (running) "Скасувати" else "Видалити",
+                        primary = false
+                    ).apply {
+                        setTextColor(if (running) Color.WHITE else Color.rgb(255, 170, 170))
+                        setOnClickListener {
+                            if (running) {
+                                modelManager.cancelDownload(spec)
+                                render()
+                            } else {
+                                deleteModel(spec)
+                            }
+                        }
+                    }
+                    actions.addView(secondary, LinearLayout.LayoutParams(dp(118), dp(50)).apply {
+                        marginStart = dp(8)
+                    })
+                }
+
+                card.addView(actions, LinearLayout.LayoutParams(-1, dp(50)))
+
+                content.addView(card, LinearLayout.LayoutParams(-1, -2).apply {
+                    bottomMargin = dp(12)
+                })
+
+                if (firstRender) animateIn(card, index * 55L, 16)
             }
 
-            val own = Button(this).apply {
-                text = "Імпортувати свою .litertlm"
-                isAllCaps = false
+            val own = glassButton("Імпортувати свою .litertlm").apply {
                 setOnClickListener {
                     val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                         addCategory(Intent.CATEGORY_OPENABLE)
@@ -1066,49 +1211,146 @@ class MainActivity : Activity() {
                     dialog.dismiss()
                 }
             }
-            content.addView(own, LinearLayout.LayoutParams(-1, dp(54)))
+            content.addView(own, LinearLayout.LayoutParams(-1, dp(52)).apply {
+                topMargin = dp(2)
+            })
+            if (firstRender) animateIn(own, 180L, 10)
 
-            val close = Button(this).apply {
-                text = "Закрити"
-                isAllCaps = false
-                setOnClickListener { dialog.dismiss() }
-            }
-            content.addView(close, LinearLayout.LayoutParams(-1, dp(54)).apply { topMargin = dp(6) })
-
-            content.postDelayed({
-                if (dialog.isShowing) render()
-            }, 1200)
+            firstRender = false
         }
 
-        dialog.setContentView(scroll)
+        var previousTerminal = ""
+        fun tick() {
+            if (!dialog.isShowing) return
+
+            val running = modelManager.models.mapNotNull { spec ->
+                val state = modelManager.query(spec) ?: return@mapNotNull null
+                if (state.status == DownloadManager.STATUS_RUNNING ||
+                    state.status == DownloadManager.STATUS_PENDING
+                ) spec to state else null
+            }
+
+            when {
+                loadingModelId != null -> {
+                    footer.visibility = View.VISIBLE
+                    footerProgress.isIndeterminate = true
+                    val spec = modelManager.models.firstOrNull { it.id == loadingModelId }
+                    footerText.text = "Запускаю " + (spec?.label ?: "модель") + "…"
+                }
+                running.isNotEmpty() -> {
+                    val pair = running.first()
+                    val spec = pair.first
+                    val state = pair.second
+                    val pct = if (state.total > 0L) {
+                        ((state.downloaded * 100L) / state.total).toInt().coerceIn(0, 100)
+                    } else null
+                    footer.visibility = View.VISIBLE
+                    footerProgress.isIndeterminate = pct == null
+                    if (pct != null) footerProgress.progress = pct
+                    val extra = if (running.size > 1) "  ·  ще " + (running.size - 1) else ""
+                    footerText.text =
+                        if (pct != null) spec.label + " · " + pct + "%" + extra
+                        else spec.label + " · завантаження" + extra
+                }
+                else -> {
+                    footer.visibility = View.GONE
+                    footerProgress.isIndeterminate = false
+                }
+            }
+
+            val pendingId = modelManager.pendingActivationId()
+            if (pendingId != null && !loadingModel) {
+                val spec = modelManager.models.firstOrNull { it.id == pendingId }
+                if (spec != null && modelManager.isDownloaded(spec)) {
+                    modelManager.clearPendingActivation()
+                    loadingModel = true
+                    loadingModelId = spec.id
+                    render()
+                    useModel(spec) { ok, message ->
+                        if (!ok) {
+                            Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+                        }
+                        render()
+                    }
+                }
+            }
+
+            val terminalSignature = modelManager.models.joinToString("|") { spec ->
+                val state = modelManager.query(spec)
+                spec.id + ":" + (state?.status ?: 0) + ":" + modelManager.isDownloaded(spec)
+            }
+            if (terminalSignature != previousTerminal &&
+                running.isEmpty() &&
+                loadingModelId == null
+            ) {
+                previousTerminal = terminalSignature
+                render()
+            }
+
+            handler.postDelayed({ tick() }, 450)
+        }
+
+        dialog.setContentView(shell)
+        dialog.setCanceledOnTouchOutside(true)
         dialog.show()
         dialog.window?.let { w ->
-            w.setBackgroundDrawable(ColorDrawable(Color.rgb(24, 24, 24)))
-            w.setLayout((resources.displayMetrics.widthPixels * 0.94f).toInt(), (resources.displayMetrics.heightPixels * 0.82f).toInt())
+            w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            w.setDimAmount(0.62f)
+            w.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            w.setLayout(
+                (resources.displayMetrics.widthPixels * 0.94f).toInt(),
+                (resources.displayMetrics.heightPixels * 0.86f).toInt()
+            )
             w.setGravity(Gravity.CENTER)
         }
+
+        shell.alpha = 0f
+        shell.scaleX = 0.97f
+        shell.scaleY = 0.97f
+        shell.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(220).start()
+
         render()
+        tick()
     }
 
-    private fun useModel(spec: ModelSpec, dialog: Dialog?) {
+    private fun useModel(
+        spec: ModelSpec,
+        onFinished: ((Boolean, String) -> Unit)? = null
+    ) {
         if (!modelManager.isDownloaded(spec)) {
-            Toast.makeText(this, "Дочекайся повного завантаження моделі", Toast.LENGTH_SHORT).show()
+            loadingModel = false
+            loadingModelId = null
+            val message = "Дочекайся повного завантаження моделі"
+            onFinished?.invoke(false, message)
             return
         }
+
         val file = modelManager.modelFile(spec)
-        if (!file.exists()) return
+        if (!file.exists()) {
+            loadingModel = false
+            loadingModelId = null
+            onFinished?.invoke(false, "Файл моделі не знайдено")
+            return
+        }
+
         loadingModel = true
+        loadingModelId = spec.id
         updateHeader()
+
         llm.loadModel(file.absolutePath) { ok, message ->
             loadingModel = false
+            loadingModelId = null
+
             if (ok) {
                 modelManager.setSelected(spec)
+                llm.setHistory(activeChat.messages)
                 Toast.makeText(this, spec.label + " активна", Toast.LENGTH_SHORT).show()
             } else {
-                addAssistant(message)
+                modelManager.clearSelected()
             }
+
             updateHeader()
-            if (ok) dialog?.dismiss()
+            onFinished?.invoke(ok, message)
         }
     }
 
