@@ -27,14 +27,14 @@
 
     <style name="NexusDialogButtonStyle" parent="@android:style/Widget.Material.Button">
         <item name="android:textColor">#FFFFFF</item>
-        <item name="android:backgroundTint">#424242</item>
+        <item name="android:backgroundTint">#2A2A2A</item>
         <item name="android:textAllCaps">false</item>
         <item name="android:minHeight">44dp</item>
     </style>
 
     <style name="NexusButtonStyle" parent="@android:style/Widget.Material.Button">
         <item name="android:textColor">#FFFFFF</item>
-        <item name="android:backgroundTint">#3A3A3A</item>
+        <item name="android:backgroundTint">#232323</item>
         <item name="android:minHeight">48dp</item>
         <item name="android:textAllCaps">false</item>
     </style>
