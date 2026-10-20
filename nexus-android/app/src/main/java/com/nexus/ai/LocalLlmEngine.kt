@@ -12,6 +12,8 @@ import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.MessageCallback
+import com.google.ai.edge.litertlm.NoRepeatNgramConfig
+import com.google.ai.edge.litertlm.RepetitionPenaltyConfig
 import com.google.ai.edge.litertlm.ThinkingConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,6 +21,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 
 class LocalLlmEngine(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -28,6 +31,11 @@ class LocalLlmEngine(private val context: Context) {
     private var conversation: Conversation? = null
     private var historySnapshot: MutableList<StoredMessage> = mutableListOf()
     private var supportsThinkingModel: Boolean = false
+
+    @Volatile var isGenerating: Boolean = false
+        private set
+
+    @Volatile private var cancelRequested: Boolean = false
 
     @Volatile var isLoaded: Boolean = false
         private set
@@ -212,18 +220,29 @@ class LocalLlmEngine(private val context: Context) {
 
     private fun compactHistory(messages: List<StoredMessage>): List<StoredMessage> {
         if (messages.isEmpty()) return emptyList()
+
         val selected = mutableListOf<StoredMessage>()
-        var remainingChars = 2200
+        var remainingChars = 1800
+        var lastAssistantNormalized: String? = null
 
         for (m in messages.asReversed()) {
             if (m.role != "user" && m.role != "assistant" && m.role != "model") continue
-            if (remainingChars <= 0 || selected.size >= 8) break
+            if (remainingChars <= 0 || selected.size >= 6) break
 
             val cleaned = m.text.trim()
             if (cleaned.isEmpty()) continue
-            val take = minOf(cleaned.length, 650, remainingChars)
-            val shortened = cleaned.take(take)
-            selected += StoredMessage(m.role, shortened)
+
+            val isAssistant = m.role == "assistant" || m.role == "model"
+            if (isAssistant) {
+                val normalized = cleaned.lowercase(Locale.ROOT)
+                    .replace(Regex("\\s+"), " ")
+                    .take(220)
+                if (normalized == lastAssistantNormalized) continue
+                lastAssistantNormalized = normalized
+            }
+
+            val take = minOf(cleaned.length, 560, remainingChars)
+            selected += StoredMessage(m.role, cleaned.take(take))
             remainingChars -= take
         }
 
@@ -255,7 +274,9 @@ class LocalLlmEngine(private val context: Context) {
             languageRule + " " +
             "Be concise and useful. " +
             style + " " +
-            "Keep conversational continuity using the provided chat history. " +
+            "Keep conversational continuity using the provided chat history, but treat the latest user message as the current task. " +
+            "If the user changes subject, answer the new subject normally and never repeat an earlier refusal just because it appeared in history. " +
+            "Do not confuse benign programming requests such as ordinary games, utilities, or simulations with attacks. " +
             "Do not provide instructions that meaningfully facilitate serious harm, malware, credential theft, illegal abuse, or bypassing safety protections. " +
             "Never claim an Android action was executed unless the app reports that it succeeded. " +
             "Every action that changes the phone must be confirmed by the user in the app before execution."
@@ -275,19 +296,37 @@ class LocalLlmEngine(private val context: Context) {
     fun send(
         prompt: String,
         attachments: List<NexusAttachment>,
+        historyBeforePrompt: List<StoredMessage> = emptyList(),
         onChunk: (String) -> Unit,
         onDone: () -> Unit,
+        onCancelled: () -> Unit = {},
         onError: (String) -> Unit,
     ) {
-        val conv = conversation
-        if (!isLoaded || conv == null) {
+        if (!isLoaded || engine == null) {
             onError("Модель ще не готова.")
             return
         }
 
         scope.launch {
             val generated = StringBuilder()
+            val finished = AtomicBoolean(false)
+            cancelRequested = false
+            isGenerating = true
+
             try {
+                if (historyBeforePrompt.isNotEmpty()) {
+                    historySnapshot = compactHistory(historyBeforePrompt).toMutableList()
+                    conversation?.close()
+                    conversation = engine?.createConversation(conversationConfig())
+                }
+
+                val conv = conversation
+                if (conv == null) {
+                    isGenerating = false
+                    main.post { onError("Модель ще не готова.") }
+                    return@launch
+                }
+
                 val contents = mutableListOf<Content>()
                 contents += Content.Text(languageHint(prompt) + prompt)
 
@@ -302,64 +341,92 @@ class LocalLlmEngine(private val context: Context) {
                     }
                 }
 
+                fun finishCancelled() {
+                    if (!finished.compareAndSet(false, true)) return
+                    isGenerating = false
+
+                    historySnapshot += StoredMessage("user", prompt)
+                    if (generated.isNotBlank()) {
+                        historySnapshot += StoredMessage("assistant", generated.toString())
+                    }
+                    historySnapshot = compactHistory(historySnapshot).toMutableList()
+
+                    scope.launch {
+                        try {
+                            conversation?.close()
+                            conversation = engine?.createConversation(conversationConfig())
+                        } catch (_: Throwable) {}
+                        main.post { onCancelled() }
+                    }
+                }
+
+                fun finishNormally() {
+                    if (!finished.compareAndSet(false, true)) return
+                    isGenerating = false
+
+                    historySnapshot += StoredMessage("user", prompt)
+                    if (generated.isNotBlank()) {
+                        historySnapshot += StoredMessage("assistant", generated.toString())
+                    }
+                    historySnapshot = compactHistory(historySnapshot).toMutableList()
+                    main.post { onDone() }
+                }
+
                 conv.sendMessageAsync(
                     Contents.of(contents),
                     object : MessageCallback {
                         override fun onMessage(message: Message) {
                             val token = message.toString()
-                            if (token.isNotEmpty()) {
+                            if (token.isNotEmpty() && !cancelRequested) {
                                 generated.append(token)
                                 main.post { onChunk(token) }
                             }
                         }
 
                         override fun onDone() {
-                            historySnapshot += StoredMessage("user", prompt)
-                            if (generated.isNotEmpty()) {
-                                historySnapshot += StoredMessage("assistant", generated.toString())
-                            }
-                            historySnapshot = compactHistory(historySnapshot).toMutableList()
-                            main.post { onDone() }
+                            if (cancelRequested) finishCancelled() else finishNormally()
                         }
 
                         override fun onError(throwable: Throwable) {
-                            main.post { onError(friendlyError(throwable)) }
+                            if (cancelRequested ||
+                                throwable.message.orEmpty().contains("cancel", ignoreCase = true)
+                            ) {
+                                finishCancelled()
+                            } else if (finished.compareAndSet(false, true)) {
+                                isGenerating = false
+                                main.post { onError(friendlyError(throwable)) }
+                            }
                         }
-                    }
+                    },
+                    repetitionPenaltyConfig = RepetitionPenaltyConfig(
+                        repetitionPenalty = 1.08f,
+                        presencePenalty = 0.05f,
+                        frequencyPenalty = 0.05f,
+                        windowSize = 256,
+                    ),
+                    noRepeatNgramConfig = NoRepeatNgramConfig(
+                        noRepeatNgramSize = 4,
+                        windowSize = 256,
+                    ),
                 )
             } catch (e: Throwable) {
-                main.post { onError(friendlyError(e)) }
+                if (cancelRequested) {
+                    isGenerating = false
+                    main.post { onCancelled() }
+                } else {
+                    isGenerating = false
+                    main.post { onError(friendlyError(e)) }
+                }
             }
         }
     }
 
-    private fun languageHint(text: String): String {
-        if (replyLanguage != "auto") return ""
-        val language = detectLanguage(text)
-        return when (language) {
-            "uk" -> "[Reply in Ukrainian.]\n"
-            "ru" -> "[Reply in Russian.]\n"
-            "pl" -> "[Reply in Polish.]\n"
-            "de" -> "[Reply in German.]\n"
-            "fr" -> "[Reply in French.]\n"
-            "es" -> "[Reply in Spanish.]\n"
-            "en" -> "[Reply in English.]\n"
-            else -> "[Reply in the same language as the user.]\n"
-        }
-    }
-
-    private fun detectLanguage(text: String): String {
-        val lower = text.lowercase(Locale.ROOT)
-        return when {
-            Regex("[іїєґ]").containsMatchIn(lower) -> "uk"
-            Regex("[ąćęłńóśźż]").containsMatchIn(lower) -> "pl"
-            Regex("[äöüß]").containsMatchIn(lower) -> "de"
-            Regex("[éèêëàâîïôùûüçœ]").containsMatchIn(lower) -> "fr"
-            Regex("[ñáéíóúü¿¡]").containsMatchIn(lower) -> "es"
-            Regex("[а-яё]").containsMatchIn(lower) -> "ru"
-            Regex("[a-z]").containsMatchIn(lower) -> "en"
-            else -> "auto"
-        }
+    fun cancelGeneration() {
+        if (!isGenerating) return
+        cancelRequested = true
+        try {
+            conversation?.cancelProcess()
+        } catch (_: Throwable) {}
     }
 
     fun close() {
@@ -378,6 +445,8 @@ class LocalLlmEngine(private val context: Context) {
         isLoaded = false
         mediaPipelineEnabled = false
         supportsThinkingModel = false
+        isGenerating = false
+        cancelRequested = false
     }
 
     private fun friendlyError(error: Throwable): String {
