@@ -72,6 +72,7 @@ class MainActivity : Activity() {
     private lateinit var attachmentStrip: LinearLayout
     private lateinit var modelStatus: TextView
     private lateinit var screenButton: ImageButton
+    private lateinit var sendButton: ImageButton
     private lateinit var globalDownloadBar: LinearLayout
     private lateinit var globalDownloadText: TextView
     private lateinit var globalDownloadProgress: ProgressBar
@@ -98,6 +99,7 @@ class MainActivity : Activity() {
     private var loadingModel = false
     private var loadingModelId: String? = null
     private var downloadTickerStarted = false
+    private var generatingResponse = false
 
     private val prefs by lazy { getSharedPreferences("nexus_settings", MODE_PRIVATE) }
 
@@ -207,7 +209,7 @@ class MainActivity : Activity() {
 
         outer.addView(buildGlobalDownloadBar(), LinearLayout.LayoutParams(-1, dp(46)))
 
-        outer.addView(buildComposer(), LinearLayout.LayoutParams(-1, dp(72)))
+        outer.addView(buildComposer(), LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT))
         return outer
     }
 
@@ -349,7 +351,8 @@ class MainActivity : Activity() {
     private fun buildComposer(): View {
         val outer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            gravity = Gravity.BOTTOM
+            minimumHeight = dp(66)
             setPadding(dp(10), dp(5), dp(10), dp(9))
             setBackgroundColor(Color.BLACK)
         }
@@ -366,12 +369,16 @@ class MainActivity : Activity() {
             setHintTextColor(Color.rgb(145, 145, 145))
             setTextColor(Color.WHITE)
             textSize = 16f
-            maxLines = 4
             minLines = 1
-            setPadding(dp(16), 0, dp(10), 0)
+            maxLines = 6
+            gravity = Gravity.CENTER_VERTICAL
+            setHorizontallyScrolling(false)
+            setPadding(dp(16), dp(10), dp(10), dp(10))
+            setMinHeight(dp(52))
+            setMaxHeight(dp(146))
             background = glassDrawable(24, 36, 42)
         }
-        outer.addView(input, LinearLayout.LayoutParams(0, dp(52), 1f).apply {
+        outer.addView(input, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
             marginStart = dp(8)
             marginEnd = dp(6)
         })
@@ -380,7 +387,7 @@ class MainActivity : Activity() {
         mic.setOnClickListener { startVoice() }
         outer.addView(mic, LinearLayout.LayoutParams(dp(44), dp(44)))
 
-        val send = ImageButton(this).apply {
+        sendButton = ImageButton(this).apply {
             setImageResource(R.drawable.ic_send)
             contentDescription = "Надіслати"
             background = GradientDrawable().apply {
@@ -389,9 +396,15 @@ class MainActivity : Activity() {
             }
             setPadding(dp(11), dp(11), dp(11), dp(11))
             addPressAnimation(this)
+            setOnClickListener {
+                if (generatingResponse) {
+                    llm.cancelGeneration()
+                } else {
+                    sendCurrent()
+                }
+            }
         }
-        send.setOnClickListener { sendCurrent() }
-        outer.addView(send, LinearLayout.LayoutParams(dp(46), dp(46)))
+        outer.addView(sendButton, LinearLayout.LayoutParams(dp(46), dp(46)))
         return outer
     }
 
@@ -814,6 +827,20 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun setGeneratingState(active: Boolean) {
+        generatingResponse = active
+        if (!::sendButton.isInitialized) return
+
+        sendButton.setImageResource(if (active) R.drawable.ic_stop else R.drawable.ic_send)
+        sendButton.contentDescription = if (active) "Зупинити відповідь" else "Надіслати"
+        sendButton.animate()
+            .rotation(if (active) 90f else 0f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(160)
+            .start()
+    }
+
     private fun sendCurrent() {
         val text = input.text.toString().trim()
         if (text.isEmpty() && attachments.isEmpty()) return
@@ -1013,27 +1040,54 @@ class MainActivity : Activity() {
 
         val assistantView = addStreamingAssistant()
         val buffer = StringBuilder()
+        val historyBeforePrompt =
+            if (activeChat.messages.isNotEmpty()) activeChat.messages.dropLast(1)
+            else emptyList()
+
+        setGeneratingState(true)
+
+        fun persistPartialOrFinal(speak: Boolean) {
+            val finalText = buffer.toString().trim()
+            if (finalText.isBlank()) {
+                val parent = assistantView.parent as? View
+                if (parent != null) chatContainer.removeView(parent)
+            } else {
+                assistantView.text = finalText
+                activeChat.messages += StoredMessage("assistant", finalText)
+                saveChats()
+                if (speak) speakIfNeeded(finalText)
+            }
+            scrollBottom()
+        }
 
         llm.send(
             prompt + fileContext,
             sentAttachments,
+            historyBeforePrompt = historyBeforePrompt,
             onChunk = { chunk ->
                 buffer.append(chunk)
                 assistantView.text = buffer.toString()
                 scrollBottom()
             },
             onDone = {
-                val finalText = buffer.toString().ifBlank { "Модель не повернула відповіді." }
-                assistantView.text = finalText
-                activeChat.messages += StoredMessage("assistant", finalText)
-                saveChats()
-                speakIfNeeded(finalText)
-                scrollBottom()
+                setGeneratingState(false)
+                val text = buffer.toString().trim()
+                if (text.isBlank()) {
+                    assistantView.text = "Модель не повернула відповіді."
+                    activeChat.messages += StoredMessage("assistant", assistantView.text.toString())
+                    saveChats()
+                } else {
+                    persistPartialOrFinal(speak = true)
+                }
+            },
+            onCancelled = {
+                setGeneratingState(false)
+                persistPartialOrFinal(speak = false)
             },
             onError = { error ->
-                val finalText = error
-                assistantView.text = finalText
-                activeChat.messages += StoredMessage("assistant", finalText)
+                setGeneratingState(false)
+                assistantView.text = error
+                activeChat.messages += StoredMessage("assistant", error)
                 saveChats()
                 scrollBottom()
             }
