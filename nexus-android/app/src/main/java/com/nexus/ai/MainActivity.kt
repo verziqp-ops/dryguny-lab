@@ -144,6 +144,13 @@ class MainActivity : Activity() {
             setGeneratingState(false)
         }
 
+        if (::input.isInitialized) {
+            input.isEnabled = true
+            input.isFocusable = true
+            input.isFocusableInTouchMode = true
+        }
+        if (Build.VERSION.SDK_INT >= 30) root.requestApplyInsets()
+
         updateHeader()
         if (pendingScreenAttachment && ScreenCaptureService.isRunning) {
             ScreenCaptureService.requestFreshCapture()
