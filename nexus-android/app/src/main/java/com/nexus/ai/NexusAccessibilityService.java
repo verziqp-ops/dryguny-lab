@@ -9,7 +9,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.Gravity;
-import android.view.PixelFormat;
+import android.graphics.PixelFormat;
 import android.view.View;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
@@ -99,7 +99,7 @@ public class NexusAccessibilityService extends AccessibilityService {
         if(any(s,"bluetooth","блютуз"))return Settings.ACTION_BLUETOOTH_SETTINGS;
         if(any(s,"батаре","акумулятор"))return Settings.ACTION_BATTERY_SAVER_SETTINGS;
         if(any(s,"налаштування екрана","яскравіст","display settings"))return Settings.ACTION_DISPLAY_SETTINGS;
-        if(any(s,"сповіщення","уведомлен"))return Settings.ACTION_NOTIFICATION_SETTINGS;
+        if(any(s,"сповіщення","уведомлен"))return "android.settings.NOTIFICATION_SETTINGS";
         if(any(s,"всі додатки","налаштування додатків","програми"))return Settings.ACTION_APPLICATION_SETTINGS;
         if(any(s,"спец можливост","accessibility"))return Settings.ACTION_ACCESSIBILITY_SETTINGS;
         if(any(s,"безпек","security"))return Settings.ACTION_SECURITY_SETTINGS;
