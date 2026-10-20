@@ -31,6 +31,9 @@ class LocalLlmEngine(private val context: Context) {
     private var conversation: Conversation? = null
     private var historySnapshot: MutableList<StoredMessage> = mutableListOf()
     private var supportsThinkingModel: Boolean = false
+    private val loadLock = Any()
+    private var loadingPath: String? = null
+    private val loadingCallbacks = mutableListOf<(Boolean, String) -> Unit>()
 
     @Volatile var isGenerating: Boolean = false
         private set
@@ -54,53 +57,88 @@ class LocalLlmEngine(private val context: Context) {
         context.getSharedPreferences("nexus_settings", Context.MODE_PRIVATE)
             .getString("reply_language", "auto") ?: "auto"
 
+    fun isLoading(path: String): Boolean =
+        synchronized(loadLock) { loadingPath == path }
+
     fun loadModel(path: String, onDone: (Boolean, String) -> Unit) {
         if (isLoaded && modelPath == path && conversation != null) {
             main.post { onDone(true, "Модель вже активна") }
             return
         }
 
+        synchronized(loadLock) {
+            if (loadingPath == path) {
+                loadingCallbacks += onDone
+                return
+            }
+            if (loadingPath != null) {
+                main.post { onDone(false, "Інша модель ще запускається. Дочекайся завершення.") }
+                return
+            }
+            loadingPath = path
+            loadingCallbacks += onDone
+        }
+
         scope.launch {
-            closeInternal()
             val file = File(path)
             if (!file.exists()) {
-                main.post { onDone(false, "Файл моделі не знайдено.") }
+                finishModelLoad(path, false, "Файл моделі не знайдено.")
                 return@launch
             }
 
+            closeInternal()
             val wantsVision = isVisionModel(path)
-            supportsThinkingModel = File(path).name.lowercase(Locale.ROOT).contains("qwen3.5")
+            supportsThinkingModel = file.name.lowercase(Locale.ROOT).contains("qwen3.5")
 
             val preferredTokens = when {
-                wantsVision -> 768
-                File(path).name.contains("4B", ignoreCase = true) -> 640
-                File(path).name.contains("2B", ignoreCase = true) -> 1024
-                else -> 768
+                wantsVision -> 640
+                file.name.contains("4B", ignoreCase = true) -> 512
+                file.name.contains("2B", ignoreCase = true) -> 768
+                else -> 640
             }
 
-            fun markLoaded(light: Boolean = false) {
+            fun markLoaded(message: String) {
                 isLoaded = true
                 modelPath = path
                 context.getSharedPreferences("nexus_model", Context.MODE_PRIVATE)
                     .edit().putString("model_path", path).apply()
-                main.post {
-                    onDone(true, if (light) "CPU · легкий режим" else "CPU")
-                }
+                finishModelLoad(path, true, message)
             }
 
             try {
                 initialize(path, preferredTokens, wantsVision)
-                markLoaded()
-            } catch (_: Throwable) {
+                markLoaded("CPU")
+            } catch (first: Throwable) {
+                // 4B already starts with the low-memory configuration.
+                // Retrying the same huge model used to make activation take several minutes.
+                if (file.name.contains("4B", ignoreCase = true) || preferredTokens <= 512) {
+                    closeInternal()
+                    finishModelLoad(path, false, friendlyError(first))
+                    return@launch
+                }
+
                 try {
                     closeInternal()
-                    supportsThinkingModel = File(path).name.lowercase(Locale.ROOT).contains("qwen3.5")
+                    supportsThinkingModel = file.name.lowercase(Locale.ROOT).contains("qwen3.5")
                     initialize(path, 512, wantsVision)
-                    markLoaded(light = true)
+                    markLoaded("CPU · легкий режим")
                 } catch (second: Throwable) {
                     closeInternal()
-                    main.post { onDone(false, friendlyError(second)) }
+                    finishModelLoad(path, false, friendlyError(second))
                 }
+            }
+        }
+    }
+
+    private fun finishModelLoad(path: String, ok: Boolean, message: String) {
+        val callbacks = synchronized(loadLock) {
+            if (loadingPath != path) return
+            loadingPath = null
+            loadingCallbacks.toList().also { loadingCallbacks.clear() }
+        }
+        main.post {
+            callbacks.forEach { callback ->
+                try { callback(ok, message) } catch (_: Throwable) {}
             }
         }
     }
@@ -112,8 +150,8 @@ class LocalLlmEngine(private val context: Context) {
             val cache = File(context.cacheDir, "litert_" + File(path).name.hashCode()).apply { mkdirs() }
             val config = EngineConfig(
                 modelPath = path,
-                backend = Backend.CPU(threadCount = 6),
-                visionBackend = if (vision) Backend.CPU(threadCount = 6) else null,
+                backend = Backend.CPU(threadCount = 4),
+                visionBackend = if (vision) Backend.CPU(threadCount = 4) else null,
                 maxNumTokens = maxTokens,
                 cacheDir = cache.absolutePath,
             )
