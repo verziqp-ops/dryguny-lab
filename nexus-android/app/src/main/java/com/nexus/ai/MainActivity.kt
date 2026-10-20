@@ -311,12 +311,6 @@ class MainActivity : Activity() {
             }
 
             when {
-                loadingModelId != null -> {
-                    globalDownloadBar.visibility = View.VISIBLE
-                    globalDownloadProgress.isIndeterminate = true
-                    val spec = modelManager.models.firstOrNull { it.id == loadingModelId }
-                    globalDownloadText.text = "Запускаю " + (spec?.label ?: "модель") + "…"
-                }
                 running.isNotEmpty() -> {
                     val pair = running.first()
                     val spec = pair.first
@@ -1085,7 +1079,11 @@ class MainActivity : Activity() {
 
     private fun sendToLocalAi(prompt: String, sentAttachments: List<NexusAttachment>) {
         if (!llm.isLoaded) {
-            addAssistant("Обери й завантаж локальну модель через кнопку моделі зверху.")
+            if (loadingModel || loadingModelId != null) {
+                addAssistant("Модель ще готується у фоні. Спробуй через кілька секунд.")
+            } else {
+                addAssistant("Обери й завантаж локальну модель через кнопку моделі зверху.")
+            }
             return
         }
 
