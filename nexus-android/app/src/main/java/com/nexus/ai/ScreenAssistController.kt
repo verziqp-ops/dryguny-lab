@@ -34,6 +34,7 @@ class ScreenAssistController(
     private var liveButton: TextView? = null
     private var input: EditText? = null
     private var sendButton: TextView? = null
+    private var pendingQuestion: String? = null
     private var busy = false
     private var live = false
     private var lastScreenSignature = ""
@@ -113,14 +114,17 @@ class ScreenAssistController(
             gravity = Gravity.CENTER
             background = rounded(Color.WHITE, 20)
             setOnClickListener {
+                val q = input?.text?.toString()?.trim().orEmpty()
+
                 if (busy) {
-                    cancelOverlayGeneration()
-                } else {
-                    val q = input?.text?.toString()?.trim().orEmpty()
                     if (q.isNotEmpty()) {
+                        pendingQuestion = q
                         input?.setText("")
-                        ask(q)
                     }
+                    cancelOverlayGeneration()
+                } else if (q.isNotEmpty()) {
+                    input?.setText("")
+                    ask(q)
                 }
             }
         }
@@ -163,6 +167,7 @@ class ScreenAssistController(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_SECURE,
             PixelFormat.TRANSLUCENT
         ).apply {
@@ -211,7 +216,21 @@ class ScreenAssistController(
                     handler.postDelayed({
                         val imm = service.getSystemService(InputMethodManager::class.java)
                         imm.showSoftInput(v, InputMethodManager.SHOW_IMPLICIT)
-                    }, 120)
+
+                        handler.postDelayed({
+                            try {
+                                val imeBottom = container.rootWindowInsets
+                                    ?.getInsets(android.view.WindowInsets.Type.ime())
+                                    ?.bottom ?: 0
+                                if (imeBottom > 0) {
+                                    val b = wm.currentWindowMetrics.bounds
+                                    val h = container.height.coerceAtLeast(dp(180))
+                                    p.y = max(dp(48), b.height() - imeBottom - h - dp(10))
+                                    wm.updateViewLayout(container, p)
+                                }
+                            } catch (_: Exception) {}
+                        }, 180)
+                    }, 100)
                 }
             }
         } catch (_: Exception) {
@@ -222,6 +241,13 @@ class ScreenAssistController(
 
     fun ask(question: String) {
         show()
+        if (question.isBlank()) return
+
+        if (busy) {
+            pendingQuestion = question
+            cancelOverlayGeneration()
+            return
+        }
 
         val visible = service.screenText().take(6000)
         val online = NetworkState.hasInternet(service)
@@ -247,7 +273,13 @@ class ScreenAssistController(
 
     fun hide() {
         live = false
-        if (busy) cancelOverlayGeneration()
+        handler.removeCallbacks(liveRunnable)
+        pendingQuestion = null
+        if (NexusRuntime.engine(service).generationOwner == "screen") {
+            NexusRuntime.engine(service).cancelGeneration("screen")
+        }
+        busy = false
+        resetSendButton()
         hideIme()
         root?.let {
             try { wm.removeView(it) } catch (_: Exception) {}
@@ -305,7 +337,12 @@ class ScreenAssistController(
             return
         }
         if (engine.isGenerating) {
-            message("NEXUS зараз відповідає в іншому запиті.")
+            if (engine.generationOwner == "screen") {
+                pendingQuestion = prompt
+                engine.cancelGeneration("screen")
+            } else {
+                message("NEXUS зараз відповідає в основному чаті.")
+            }
             return
         }
 
@@ -357,11 +394,23 @@ class ScreenAssistController(
                 resetSendButton()
                 val clean = stripDirectives(out.toString())
                 if (clean.isNotBlank()) message(clean) else message("Зупинено.")
+
+                val next = pendingQuestion
+                pendingQuestion = null
+                if (!next.isNullOrBlank() && root != null) {
+                    handler.postDelayed({ ask(next) }, 100)
+                }
             },
             onError = { error ->
                 busy = false
                 resetSendButton()
                 message(error)
+
+                val next = pendingQuestion
+                pendingQuestion = null
+                if (!next.isNullOrBlank() && root != null) {
+                    handler.postDelayed({ ask(next) }, 120)
+                }
             }
         )
     }
@@ -394,9 +443,11 @@ class ScreenAssistController(
     }
 
     private fun cancelOverlayGeneration() {
-        NexusRuntime.engine(service).cancelGeneration()
-        busy = false
-        resetSendButton()
+        val cancelled = NexusRuntime.engine(service).cancelGeneration("screen")
+        if (!cancelled) {
+            busy = false
+            resetSendButton()
+        }
     }
 
     private fun resetSendButton() {
