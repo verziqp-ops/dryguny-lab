@@ -1,0 +1,4 @@
+<resources>
+<string name="app_name">NEXUS AI</string>
+<string name="accessibility_description">NEXUS AI can read the visible accessibility tree when you ask it to explain or control the screen. It can click, scroll, go back or home, and open Android settings.</string>
+</resources>
