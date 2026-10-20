@@ -85,6 +85,7 @@ class MainActivity : Activity() {
 
     private var recognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
+    private var ttsReady = false
     private var voiceReplyPending = false
     private var pendingScreenAttachment = false
     private var pendingCameraUri: Uri? = null
@@ -105,6 +106,7 @@ class MainActivity : Activity() {
         val wanted = conversationStore.activeId()
         activeChat = chats.firstOrNull { it.id == wanted } ?: chats.first()
         cleanLegacyNoise()
+        llm.setHistory(activeChat.messages)
 
         root = buildUi()
         setContentView(root)
@@ -344,6 +346,7 @@ class MainActivity : Activity() {
         activeChat = chat
         conversationStore.setActive(chat.id)
         saveChats()
+        llm.setHistory(activeChat.messages)
         renderActiveChat()
     }
 
@@ -351,6 +354,7 @@ class MainActivity : Activity() {
         chats.firstOrNull { it.id == id }?.let {
             activeChat = it
             conversationStore.setActive(it.id)
+            llm.setHistory(activeChat.messages)
             renderActiveChat()
         }
     }
@@ -367,6 +371,7 @@ class MainActivity : Activity() {
         }
         conversationStore.setActive(activeChat.id)
         saveChats()
+        llm.setHistory(activeChat.messages)
         renderActiveChat()
     }
 
@@ -1172,8 +1177,29 @@ class MainActivity : Activity() {
         }
         box.addView(languageFilter, LinearLayout.LayoutParams(-1, dp(54)))
 
+        val replyLanguage = Button(this).apply {
+            text = "Мова відповідей: " + languageLabel(prefs.getString("reply_language", "auto") ?: "auto")
+            isAllCaps = false
+            setOnClickListener { chooseReplyLanguage() }
+        }
+        box.addView(replyLanguage, LinearLayout.LayoutParams(-1, dp(52)))
+
+        val speechLanguage = Button(this).apply {
+            text = "Мова голосу: " + languageLabel(prefs.getString("speech_language", "auto") ?: "auto")
+            isAllCaps = false
+            setOnClickListener { chooseSpeechLanguage() }
+        }
+        box.addView(speechLanguage, LinearLayout.LayoutParams(-1, dp(52)))
+
+        val autoSendVoice = Switch(this).apply {
+            text = "Одразу надсилати голосове питання"
+            isChecked = prefs.getBoolean("auto_send_voice", true)
+            setOnCheckedChangeListener { _, checked -> prefs.edit().putBoolean("auto_send_voice", checked).apply() }
+        }
+        box.addView(autoSendVoice, LinearLayout.LayoutParams(-1, dp(54)))
+
         val speak = Switch(this).apply {
-            text = "Озвучувати відповіді"
+            text = "Озвучувати всі відповіді"
             isChecked = prefs.getBoolean("speak_replies", false)
             setOnCheckedChangeListener { _, checked -> prefs.edit().putBoolean("speak_replies", checked).apply() }
         }
@@ -1295,6 +1321,9 @@ class MainActivity : Activity() {
                 if (!list.isNullOrEmpty()) {
                     input.setText(list[0])
                     input.setSelection(input.text.length)
+                    if (prefs.getBoolean("auto_send_voice", true)) {
+                        handler.postDelayed({ sendCurrent() }, 120)
+                    }
                 }
             }
             override fun onPartialResults(partialResults: Bundle?) {
@@ -1309,31 +1338,36 @@ class MainActivity : Activity() {
 
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "uk-UA")
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            val tag = speechLanguageTag()
+            if (tag != null) putExtra(RecognizerIntent.EXTRA_LANGUAGE, tag)
         }
         recognizer?.startListening(intent)
     }
 
     private fun initTts() {
         tts = TextToSpeech(this) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                tts?.language = Locale("uk", "UA")
+            ttsReady = status == TextToSpeech.SUCCESS
+            if (ttsReady) {
+                configureTtsLanguage("uk")
                 applyTtsVoice()
             }
         }
     }
 
-    private fun availableVoices(): List<Voice> {
+    private fun availableVoices(language: String? = null): List<Voice> {
         val engine = tts ?: return emptyList()
         val all = engine.voices?.filter { !it.isNetworkConnectionRequired } ?: emptyList()
-        val uk = all.filter { it.locale.language.equals("uk", true) }
-        return (if (uk.isNotEmpty()) uk else all).sortedBy { it.name }.take(3)
+        val wanted = language ?: prefs.getString("reply_language", "auto")
+        val localized =
+            if (wanted.isNullOrBlank() || wanted == "auto") emptyList()
+            else all.filter { it.locale.language.equals(wanted, true) }
+        return (if (localized.isNotEmpty()) localized else all).sortedBy { it.name }.take(6)
     }
 
-    private fun applyTtsVoice() {
-        val voices = availableVoices()
+    private fun applyTtsVoice(language: String? = null) {
+        val voices = availableVoices(language)
         if (voices.isEmpty()) return
         val index = prefs.getInt("tts_voice", 0).coerceIn(0, voices.lastIndex)
         tts?.voice = voices[index]
@@ -1364,7 +1398,104 @@ class MainActivity : Activity() {
         val should = voiceReplyPending || prefs.getBoolean("speak_replies", false)
         voiceReplyPending = false
         if (!should) return
+
+        if (!ttsReady) {
+            handler.postDelayed({
+                if (ttsReady) speakTextNow(text)
+            }, 700)
+            return
+        }
+        speakTextNow(text)
+    }
+
+    private fun speakTextNow(text: String) {
+        val lang = detectTextLanguage(text)
+        configureTtsLanguage(lang)
+        applyTtsVoice(lang)
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "nexus_reply")
+    }
+
+    private fun configureTtsLanguage(language: String) {
+        val locale = when (language) {
+            "uk" -> Locale("uk", "UA")
+            "ru" -> Locale("ru", "RU")
+            "pl" -> Locale("pl", "PL")
+            "de" -> Locale.GERMANY
+            "fr" -> Locale.FRANCE
+            "es" -> Locale("es", "ES")
+            else -> Locale.US
+        }
+        try { tts?.language = locale } catch (_: Exception) {}
+    }
+
+    private fun detectTextLanguage(text: String): String {
+        val lower = text.lowercase(Locale.ROOT)
+        return when {
+            Regex("[іїєґ]").containsMatchIn(lower) -> "uk"
+            Regex("[ąćęłńóśźż]").containsMatchIn(lower) -> "pl"
+            Regex("[äöüß]").containsMatchIn(lower) -> "de"
+            Regex("[éèêëàâîïôùûüçœ]").containsMatchIn(lower) -> "fr"
+            Regex("[ñáéíóúü¿¡]").containsMatchIn(lower) -> "es"
+            Regex("[а-яё]").containsMatchIn(lower) -> "ru"
+            else -> "en"
+        }
+    }
+
+    private fun languageLabel(code: String): String = when (code) {
+        "uk" -> "Українська"
+        "en" -> "English"
+        "ru" -> "Русский"
+        "pl" -> "Polski"
+        "de" -> "Deutsch"
+        "fr" -> "Français"
+        "es" -> "Español"
+        else -> "Авто"
+    }
+
+    private fun chooseReplyLanguage() {
+        val codes = arrayOf("auto", "uk", "en", "ru", "pl", "de", "fr", "es")
+        val labels = codes.map { languageLabel(it) }.toTypedArray()
+        val currentCode = prefs.getString("reply_language", "auto") ?: "auto"
+        val current = codes.indexOf(currentCode).coerceAtLeast(0)
+
+        AlertDialog.Builder(this)
+            .setTitle("Мова відповідей")
+            .setSingleChoiceItems(labels, current) { dialog, which ->
+                val code = codes[which]
+                prefs.edit().putString("reply_language", code).apply()
+                llm.setReplyLanguage(code)
+                dialog.dismiss()
+                Toast.makeText(this, "Мова: " + languageLabel(code), Toast.LENGTH_SHORT).show()
+            }
+            .show()
+    }
+
+    private fun chooseSpeechLanguage() {
+        val codes = arrayOf("auto", "uk", "en", "ru", "pl", "de", "fr", "es")
+        val labels = codes.map { languageLabel(it) }.toTypedArray()
+        val currentCode = prefs.getString("speech_language", "auto") ?: "auto"
+        val current = codes.indexOf(currentCode).coerceAtLeast(0)
+
+        AlertDialog.Builder(this)
+            .setTitle("Мова розпізнавання голосу")
+            .setSingleChoiceItems(labels, current) { dialog, which ->
+                val code = codes[which]
+                prefs.edit().putString("speech_language", code).apply()
+                dialog.dismiss()
+                Toast.makeText(this, "Голос: " + languageLabel(code), Toast.LENGTH_SHORT).show()
+            }
+            .show()
+    }
+
+    private fun speechLanguageTag(): String? = when (prefs.getString("speech_language", "auto") ?: "auto") {
+        "uk" -> "uk-UA"
+        "en" -> "en-US"
+        "ru" -> "ru-RU"
+        "pl" -> "pl-PL"
+        "de" -> "de-DE"
+        "fr" -> "fr-FR"
+        "es" -> "es-ES"
+        else -> null
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, results: IntArray) {
