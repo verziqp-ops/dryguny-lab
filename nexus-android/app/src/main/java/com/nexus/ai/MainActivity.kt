@@ -29,6 +29,7 @@ import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Switch
 import android.widget.Toast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +67,7 @@ class MainActivity : Activity() {
     private var recognizer: SpeechRecognizer? = null
     private var pendingScreenAttachment = false
     private var loadingModel = false
+    private val prefs by lazy { getSharedPreferences("nexus_settings", MODE_PRIVATE) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -497,6 +499,15 @@ class MainActivity : Activity() {
     }
 
     private fun executeDeviceAction(command: String) {
+        AlertDialog.Builder(this)
+            .setTitle("Підтвердити дію")
+            .setMessage("NEXUS хоче виконати на телефоні:\n\n$command\n\nДія не буде виконана без твого підтвердження.")
+            .setPositiveButton("Підтвердити") { _, _ -> executeDeviceActionConfirmed(command) }
+            .setNegativeButton("Скасувати") { _, _ -> addAssistant("Дію скасовано.") }
+            .show()
+    }
+
+    private fun executeDeviceActionConfirmed(command: String) {
         val service = NexusAccessibilityService.get()
         if (service != null) {
             service.executeCommand(command) { result -> runOnUiThread { addAssistant(result) } }
@@ -507,9 +518,9 @@ class MainActivity : Activity() {
         if (action != null) {
             try {
                 startActivity(Intent(action))
-                addAssistant("Відкрив системний розділ. Для натискань, скролу та Show Me увімкни Screen Control у Налаштуваннях NEXUS.")
+                addAssistant("Дію виконано. Для натискань, скролу та Show Me увімкни Screen Control у Налаштуваннях NEXUS.")
             } catch (_: Exception) {
-                addAssistant("Android не дозволив відкрити цей розділ.")
+                addAssistant("Android не дозволив виконати цю дію.")
             }
         } else {
             addAssistant("Для цієї дії потрібен Screen Control. Увімкнути його можна в Налаштуваннях NEXUS.")
@@ -629,6 +640,31 @@ class MainActivity : Activity() {
             }
         }
         box.addView(info, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
+
+        val languageFilter = Switch(this).apply {
+            text = "Цензура лексики"
+            isChecked = prefs.getBoolean("language_filter", false)
+            setOnCheckedChangeListener { _, checked ->
+                prefs.edit().putBoolean("language_filter", checked).apply()
+                llm.setLanguageFilter(checked)
+            }
+        }
+        box.addView(languageFilter, LinearLayout.LayoutParams(-1, dp(54)))
+
+        val confirmActions = Switch(this).apply {
+            text = "Завжди підтверджувати дії на телефоні"
+            isChecked = true
+            isEnabled = false
+        }
+        box.addView(confirmActions, LinearLayout.LayoutParams(-1, dp(54)))
+
+        val safetyNote = TextView(this).apply {
+            text = "Цензура лексики стосується лише стилю відповідей. Захист від небезпечних дій та обов’язкове підтвердження не вимикаються."
+            setTextColor(Color.DKGRAY)
+            textSize = 12f
+            setPadding(0, 0, 0, dp(10))
+        }
+        box.addView(safetyNote, LinearLayout.LayoutParams(-1, -2))
 
         addButton("Screen Control") { showAccessibilityDisclosure() }
         addButton("Додати папку для пошуку") { chooseFolder() }
