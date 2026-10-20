@@ -138,6 +138,12 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+
+        // Recover UI if a screen-overlay request was cancelled/closed outside the activity.
+        if (llm.generationOwner != "chat" && generatingResponse) {
+            setGeneratingState(false)
+        }
+
         updateHeader()
         if (pendingScreenAttachment && ScreenCaptureService.isRunning) {
             ScreenCaptureService.requestFreshCapture()
@@ -463,7 +469,12 @@ class MainActivity : Activity() {
             setPadding(dp(10), dp(10), dp(10), dp(10))
             addPressAnimation(this)
             setOnClickListener {
-                if (generatingResponse) llm.cancelGeneration() else sendCurrent()
+                if (generatingResponse) {
+                    llm.cancelGeneration("chat")
+                    setGeneratingState(false)
+                } else {
+                    sendCurrent()
+                }
             }
         }
         controls.addView(sendButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
@@ -915,6 +926,22 @@ class MainActivity : Activity() {
         val sentAttachments = attachments.toList()
         val names = sentAttachments.map { it.name }
         val userText = if (text.isEmpty()) "Проаналізуй вкладення." else text
+
+        // While screen sharing is active, questions belong to the floating Screen Assist,
+        // not to the main chat history.
+        if (ScreenCaptureService.isRunning && feature("screen_vision")) {
+            val screenService = NexusAccessibilityService.get()
+            if (screenService != null) {
+                input.setText("")
+                attachments.clear()
+                renderAttachmentStrip()
+                hideKeyboard()
+
+                screenService.showAssistantOverlay()
+                screenService.askAssistantOverlay(userText)
+                return
+            }
+        }
 
         addUser(userText, names)
         input.setText("")
