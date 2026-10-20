@@ -939,7 +939,7 @@ class MainActivity : Activity() {
                 }
 
                 val name = TextView(this).apply {
-                    text = spec.label + "  " + spec.sizeLabel
+                    text = spec.label + (if (spec.recommended) " · Рекомендована" else "") + "  " + spec.sizeLabel
                     setTextColor(Color.WHITE)
                     textSize = 18f
                     typeface = android.graphics.Typeface.DEFAULT_BOLD
