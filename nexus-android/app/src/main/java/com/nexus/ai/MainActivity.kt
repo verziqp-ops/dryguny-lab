@@ -9,6 +9,7 @@ import android.app.StatusBarManager
 import android.content.ComponentName
 import android.content.ContentValues
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
@@ -27,6 +28,7 @@ import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowManager
@@ -37,6 +39,7 @@ import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageButton
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
@@ -90,6 +93,7 @@ class MainActivity : Activity() {
     private var pendingScreenAttachment = false
     private var pendingCameraUri: Uri? = null
     private var loadingModel = false
+    private var loadingModelId: String? = null
 
     private val prefs by lazy { getSharedPreferences("nexus_settings", MODE_PRIVATE) }
 
@@ -165,7 +169,10 @@ class MainActivity : Activity() {
     private fun buildUi(): LinearLayout {
         val outer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.BLACK)
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.rgb(3, 4, 6), Color.rgb(7, 10, 14), Color.BLACK)
+            )
             clipToPadding = false
         }
 
@@ -204,7 +211,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(8), dp(4), dp(8), dp(4))
-            setBackgroundColor(Color.BLACK)
+            background = glassDrawable(0, 22, 18)
         }
 
         val menu = iconButton(R.drawable.ic_menu, "Чати")
@@ -255,8 +262,9 @@ class MainActivity : Activity() {
         }
 
         val attach = iconButton(R.drawable.ic_plus, "Додати")
-        attach.background = rounded(Color.rgb(34, 34, 34), 24)
+        attach.background = glassDrawable(24, 42, 54)
         attach.setPadding(dp(12), dp(12), dp(12), dp(12))
+        addPressAnimation(attach)
         attach.setOnClickListener { showAttachmentSheet() }
         outer.addView(attach, LinearLayout.LayoutParams(dp(48), dp(48)))
 
@@ -268,7 +276,7 @@ class MainActivity : Activity() {
             maxLines = 4
             minLines = 1
             setPadding(dp(16), 0, dp(10), 0)
-            background = rounded(Color.rgb(31, 31, 31), 24)
+            background = glassDrawable(24, 36, 42)
         }
         outer.addView(input, LinearLayout.LayoutParams(0, dp(52), 1f).apply {
             marginStart = dp(8)
@@ -282,8 +290,12 @@ class MainActivity : Activity() {
         val send = ImageButton(this).apply {
             setImageResource(R.drawable.ic_send)
             contentDescription = "Надіслати"
-            background = rounded(Color.WHITE, 23)
+            background = GradientDrawable().apply {
+                setColor(Color.WHITE)
+                cornerRadius = dp(23).toFloat()
+            }
             setPadding(dp(11), dp(11), dp(11), dp(11))
+            addPressAnimation(this)
         }
         send.setOnClickListener { sendCurrent() }
         outer.addView(send, LinearLayout.LayoutParams(dp(46), dp(46)))
@@ -1613,7 +1625,7 @@ class MainActivity : Activity() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(10), dp(14), dp(10))
-            background = rounded(if (user) Color.rgb(47, 47, 47) else Color.rgb(18, 18, 18), 18)
+            background = if (user) glassDrawable(18, 58, 62) else glassDrawable(18, 28, 36)
         }
 
         attachmentNames.forEach { name ->
@@ -1677,6 +1689,64 @@ class MainActivity : Activity() {
         contentDescription = description
         background = null
         setPadding(dp(12), dp(12), dp(12), dp(12))
+    }
+
+    private fun glassDrawable(
+        radiusDp: Int = 24,
+        fillAlpha: Int = 34,
+        strokeAlpha: Int = 42
+    ): GradientDrawable {
+        return GradientDrawable(
+            GradientDrawable.Orientation.TL_BR,
+            intArrayOf(
+                Color.argb(fillAlpha, 255, 255, 255),
+                Color.argb((fillAlpha * 0.42f).toInt(), 130, 160, 200),
+                Color.argb((fillAlpha * 0.24f).toInt(), 255, 255, 255)
+            )
+        ).apply {
+            cornerRadius = if (radiusDp <= 0) 0f else dp(radiusDp).toFloat()
+            setStroke(dp(1), Color.argb(strokeAlpha, 255, 255, 255))
+        }
+    }
+
+    private fun addPressAnimation(view: View) {
+        view.setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> v.animate().scaleX(0.965f).scaleY(0.965f).setDuration(90).start()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(150).start()
+            }
+            false
+        }
+    }
+
+    private fun animateIn(view: View, delay: Long = 0L, distanceDp: Int = 12) {
+        view.alpha = 0f
+        view.translationY = dp(distanceDp).toFloat()
+        view.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setStartDelay(delay)
+            .setDuration(260)
+            .start()
+    }
+
+    private fun glassButton(label: String, primary: Boolean = false): Button {
+        return Button(this).apply {
+            text = label
+            isAllCaps = false
+            setTextColor(if (primary) Color.BLACK else Color.WHITE)
+            textSize = 14f
+            background = if (primary) {
+                GradientDrawable().apply {
+                    setColor(Color.argb(235, 255, 255, 255))
+                    cornerRadius = dp(18).toFloat()
+                }
+            } else {
+                glassDrawable(18, 44, 52)
+            }
+            addPressAnimation(this)
+        }
     }
 
     private fun rounded(color: Int, radiusDp: Int): GradientDrawable = GradientDrawable().apply {
