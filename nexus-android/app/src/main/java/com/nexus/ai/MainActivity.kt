@@ -180,7 +180,7 @@ class MainActivity : Activity() {
 
         chatScroll = ScrollView(this).apply {
             isFillViewport = true
-            setBackgroundColor(Color.BLACK)
+            setBackgroundColor(Color.TRANSPARENT)
             isVerticalScrollBarEnabled = false
         }
         chatContainer = LinearLayout(this).apply {
@@ -192,7 +192,7 @@ class MainActivity : Activity() {
 
         attachmentScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
-            setBackgroundColor(Color.BLACK)
+            setBackgroundColor(Color.TRANSPARENT)
             visibility = View.GONE
         }
         attachmentStrip = LinearLayout(this).apply {
@@ -258,7 +258,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(10), dp(5), dp(10), dp(9))
-            setBackgroundColor(Color.BLACK)
+            setBackgroundColor(Color.TRANSPARENT)
         }
 
         val attach = iconButton(R.drawable.ic_plus, "Додати")
@@ -424,7 +424,7 @@ class MainActivity : Activity() {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(18), dp(12), dp(12))
-            background = ColorDrawable(Color.rgb(31, 31, 31))
+            background = glassDrawable(0, 54, 62)
         }
 
         val header = LinearLayout(this).apply {
@@ -521,6 +521,9 @@ class MainActivity : Activity() {
             w.setGravity(Gravity.START)
             w.setLayout((resources.displayMetrics.widthPixels * 0.84f).toInt(), WindowManager.LayoutParams.MATCH_PARENT)
         }
+        panel.alpha = 0f
+        panel.translationX = -dp(28).toFloat()
+        panel.animate().alpha(1f).translationX(0f).setDuration(240).start()
     }
 
     private fun drawerRow(icon: Int, label: String): LinearLayout {
@@ -528,6 +531,8 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(8), 0, dp(8), 0)
+            background = glassDrawable(16, 12, 18)
+            addPressAnimation(this)
         }
         val image = ImageButton(this).apply {
             setImageResource(icon)
@@ -553,7 +558,7 @@ class MainActivity : Activity() {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(14), dp(18), dp(18))
-            background = rounded(Color.rgb(45, 45, 45), 28)
+            background = glassDrawable(28, 62, 76)
         }
 
         val title = TextView(this).apply {
@@ -591,6 +596,9 @@ class MainActivity : Activity() {
             w.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT)
             w.decorView.setPadding(dp(10), 0, dp(10), dp(8))
         }
+        box.alpha = 0f
+        box.translationY = dp(34).toFloat()
+        box.animate().alpha(1f).translationY(0f).setDuration(230).start()
     }
 
     private fun openPhotoPicker() {
@@ -697,7 +705,7 @@ class MainActivity : Activity() {
                 gravity = Gravity.CENTER
                 maxLines = 1
                 setPadding(dp(11), 0, dp(11), 0)
-                background = rounded(Color.rgb(40, 40, 40), 15)
+                background = glassDrawable(15, 42, 50)
                 setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_file, 0, R.drawable.ic_close, 0)
                 compoundDrawablePadding = dp(6)
                 setOnClickListener {
