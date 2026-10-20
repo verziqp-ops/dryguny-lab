@@ -944,7 +944,57 @@ class MainActivity : Activity() {
             return
         }
 
+        if (feature("web_search") && shouldWebSearch(low)) {
+            runGoogleSearch(text, sentAttachments)
+            return
+        }
+
         sendToLocalAi(text, sentAttachments)
+    }
+
+    private fun shouldWebSearch(s: String): Boolean {
+        val explicit = listOf(
+            "гугл", "google", "пошукай в інтернет", "пошукай онлайн",
+            "знайди в інтернет", "знайди онлайн", "в інтернеті"
+        ).any { s.contains(it) }
+        if (explicit) return true
+
+        return listOf(
+            "останні новини", "що нового", "шо нового", "актуальн",
+            "сьогодні", "зараз коштує", "ціна зараз", "курс зараз",
+            "остання версія", "новий реліз"
+        ).any { s.contains(it) }
+    }
+
+    private fun runGoogleSearch(
+        question: String,
+        sentAttachments: List<NexusAttachment>
+    ) {
+        val status = addStreamingAssistant().apply {
+            text = "Шукаю в Google…"
+        }
+
+        ioScope.launch {
+            val result = GoogleWebSearch.search(question)
+            withContext(Dispatchers.Main) {
+                val row = status.parent as? View
+                if (row != null) chatContainer.removeView(row)
+
+                if (!result.ok) {
+                    addAssistant(result.text, persist = false)
+                    return@withContext
+                }
+
+                val webPrompt = buildString {
+                    append(question)
+                    append("\n\nНижче текст актуальних результатів Google. ")
+                    append("Використай лише релевантну інформацію, не вигадуй факти. ")
+                    append("Якщо даних недостатньо — так і скажи.\n\n")
+                    append(result.text.take(14_000))
+                }
+                sendToLocalAi(webPrompt, sentAttachments)
+            }
+        }
     }
 
     private fun isFileSearch(s: String): Boolean =
@@ -1074,9 +1124,9 @@ class MainActivity : Activity() {
     private fun sendToLocalAi(prompt: String, sentAttachments: List<NexusAttachment>) {
         if (!llm.isLoaded) {
             if (loadingModel || loadingModelId != null) {
-                addAssistant("Модель ще готується у фоні. Спробуй через кілька секунд.")
+                addAssistant("Модель ще готується у фоні. Спробуй через кілька секунд.", persist = false)
             } else {
-                addAssistant("Обери й завантаж локальну модель через кнопку моделі зверху.")
+                addAssistant("Обери й завантаж локальну модель через кнопку моделі зверху.", persist = false)
             }
             return
         }
@@ -1096,6 +1146,29 @@ class MainActivity : Activity() {
 
         val assistantView = addStreamingAssistant()
         val buffer = StringBuilder()
+        var thinking = true
+        var thinkingFrame = 0
+        val thinkingRunnable = object : Runnable {
+            override fun run() {
+                if (!thinking) return
+                assistantView.text = when (thinkingFrame++ % 4) {
+                    0 -> "●  ○  ○"
+                    1 -> "○  ●  ○"
+                    2 -> "○  ○  ●"
+                    else -> "●  ●  ●"
+                }
+                scrollBottom()
+                handler.postDelayed(this, 320)
+            }
+        }
+        handler.post(thinkingRunnable)
+
+        fun stopThinking() {
+            if (!thinking) return
+            thinking = false
+            handler.removeCallbacks(thinkingRunnable)
+        }
+
         val historyBeforePrompt =
             if (activeChat.messages.isNotEmpty()) activeChat.messages.dropLast(1)
             else emptyList()
@@ -1121,11 +1194,13 @@ class MainActivity : Activity() {
             sentAttachments,
             historyBeforePrompt = historyBeforePrompt,
             onChunk = { chunk ->
+                stopThinking()
                 buffer.append(chunk)
                 assistantView.text = buffer.toString()
                 scrollBottom()
             },
             onDone = {
+                stopThinking()
                 setGeneratingState(false)
                 val text = buffer.toString().trim()
                 if (text.isBlank()) {
@@ -1137,10 +1212,12 @@ class MainActivity : Activity() {
                 }
             },
             onCancelled = {
+                stopThinking()
                 setGeneratingState(false)
                 persistPartialOrFinal(speak = false)
             },
             onError = { error ->
+                stopThinking()
                 setGeneratingState(false)
                 assistantView.text = error
                 activeChat.messages += StoredMessage("assistant", error)
@@ -1659,6 +1736,7 @@ class MainActivity : Activity() {
         addFeatureSwitch(box, "MultiStep", "multistep")
         addFeatureSwitch(box, "Пошук локальних файлів", "file_search")
         addFeatureSwitch(box, "Локальна пам’ять", "memory")
+        addFeatureSwitch(box, "Google Web Search", "web_search")
 
         AlertDialog.Builder(this)
             .setTitle("Функції NEXUS")
@@ -1751,7 +1829,7 @@ class MainActivity : Activity() {
         addButton("Додати NEXUS Screen у шторку") { requestTile() }
 
         val info = TextView(this).apply {
-            text = "Модель працює локально після завантаження. Мережа використовується тільки Model Manager для завантаження вибраної моделі."
+            text = "Модель працює локально після завантаження. Інтернет використовується для завантаження моделей і тільки коли потрібен Google Web Search."
             setTextColor(Color.DKGRAY)
             textSize = 12f
             setPadding(0, dp(8), 0, 0)
