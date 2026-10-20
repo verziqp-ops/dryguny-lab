@@ -185,6 +185,7 @@ class ScreenAssistController(
         val prompt = buildString {
             append("Ти екранний помічник Android. Подивись на поточний екран і дай ОДНУ коротку корисну підказку українською. ")
             append("Якщо користувачу варто натиснути конкретний видимий елемент, в кінці додай директиву [[tap:ТОЧНИЙ ТЕКСТ ЕЛЕМЕНТА]]. ")
+            append("Якщо для корисної відповіді потрібна свіжа інформація з інтернету, додай [[google:КОРОТКИЙ ПОШУКОВИЙ ЗАПИТ]]. ")
             append("Не вигадуй елементи, яких нема. Якщо підказка не потрібна — скажи це коротко.\n\n")
             append("Текст інтерфейсу:\n")
             append(text)
@@ -255,7 +256,7 @@ class ScreenAssistController(
             attachments = attachments,
             onChunk = { chunk ->
                 out.append(chunk)
-                val clean = stripTapDirective(out.toString())
+                val clean = stripDirectives(out.toString())
                 if (clean.isNotBlank()) message(clean)
             },
             onDone = {
@@ -264,8 +265,15 @@ class ScreenAssistController(
                 val target = Regex("\\[\\[tap:(.+?)]]", RegexOption.IGNORE_CASE)
                     .find(full)?.groupValues?.getOrNull(1)?.trim()
                 if (!target.isNullOrBlank()) service.highlightText(target)
-                val clean = stripTapDirective(full)
-                message(if (clean.isBlank()) "Готово." else clean)
+
+                val googleQuery = Regex("\\[\\[google:(.+?)]]", RegexOption.IGNORE_CASE)
+                    .find(full)?.groupValues?.getOrNull(1)?.trim()
+                if (!googleQuery.isNullOrBlank()) {
+                    searchForAssist(googleQuery)
+                } else {
+                    val clean = stripDirectives(full)
+                    message(if (clean.isBlank()) "Готово." else clean)
+                }
             },
             onError = { error ->
                 busy = false
@@ -274,8 +282,31 @@ class ScreenAssistController(
         )
     }
 
-    private fun stripTapDirective(text: String): String =
-        text.replace(Regex("\\s*\\[\\[tap:.+?]]\\s*", RegexOption.IGNORE_CASE), " ").trim()
+    private fun stripDirectives(text: String): String =
+        text
+            .replace(Regex("\\s*\\[\\[tap:.+?]]\\s*", RegexOption.IGNORE_CASE), " ")
+            .replace(Regex("\\s*\\[\\[google:.+?]]\\s*", RegexOption.IGNORE_CASE), " ")
+            .trim()
+
+    private fun searchForAssist(query: String) {
+        if (busy) return
+        busy = true
+        message("Шукаю в Google…")
+        scope.launch {
+            val result = GoogleWebSearch.search(query)
+            if (!result.ok) {
+                busy = false
+                message(result.text)
+                return@launch
+            }
+
+            val prompt = "Пошуковий запит: " + query +
+                "\n\nТекст результатів Google:\n" + result.text.take(12000) +
+                "\n\nДай коротку точну відповідь українською. Не вигадуй нічого поза релевантними результатами."
+            busy = false
+            askModel(prompt, includeScreen = false)
+        }
+    }
 
     private fun message(text: String) {
         messageView?.text = text
