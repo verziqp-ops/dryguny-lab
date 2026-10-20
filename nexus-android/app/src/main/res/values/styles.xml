@@ -1,13 +1,35 @@
 <resources>
-    <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+    <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
         <item name="android:statusBarColor">#000000</item>
         <item name="android:navigationBarColor">#000000</item>
         <item name="android:windowBackground">#000000</item>
         <item name="android:colorAccent">#FFFFFF</item>
+        <item name="android:textColorPrimary">#F5F5F5</item>
+        <item name="android:textColorSecondary">#A7A7A7</item>
+        <item name="android:alertDialogTheme">@style/NexusDialogTheme</item>
+        <item name="android:buttonStyle">@style/NexusButtonStyle</item>
     </style>
-    <style name="TransparentTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+
+    <style name="NexusDialogTheme" parent="android:style/Theme.Material.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/bg_nexus_dialog</item>
+        <item name="android:colorAccent">#FFFFFF</item>
+        <item name="android:textColorPrimary">#F5F5F5</item>
+        <item name="android:textColorSecondary">#B7B7B7</item>
+        <item name="android:windowTitleStyle">@android:style/TextAppearance.Material.Headline</item>
+        <item name="android:buttonStyle">@style/NexusButtonStyle</item>
+    </style>
+
+    <style name="NexusButtonStyle" parent="@android:style/Widget.Material.Button">
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="android:backgroundTint">#3A3A3A</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:textAllCaps">false</item>
+    </style>
+
+    <style name="TransparentTheme" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:colorAccent">#FFFFFF</item>
