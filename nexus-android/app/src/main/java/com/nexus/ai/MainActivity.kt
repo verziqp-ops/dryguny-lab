@@ -940,6 +940,15 @@ class MainActivity : Activity() {
             return
         }
 
+        if (ScreenCaptureService.isRunning) {
+            val service = NexusAccessibilityService.get()
+            if (service != null && feature("screen_vision")) {
+                service.showAssistantOverlay()
+                service.askAssistantOverlay(text)
+                return
+            }
+        }
+
         if (isScreenQuestion(low)) {
             if (!feature("screen_vision")) addAssistant("Аналіз екрана вимкнений у функціях NEXUS.")
             else handleScreenQuestion(text, sentAttachments)
@@ -959,7 +968,7 @@ class MainActivity : Activity() {
             return
         }
 
-        if (feature("web_search") && shouldWebSearch(low)) {
+        if (feature("web_search") && NetworkState.hasInternet(this) && shouldWebSearch(low)) {
             runGoogleSearch(text, sentAttachments)
             return
         }
@@ -968,17 +977,22 @@ class MainActivity : Activity() {
     }
 
     private fun shouldWebSearch(s: String): Boolean {
+        val n = normalizeMatchText(s)
         val explicit = listOf(
             "гугл", "google", "пошукай в інтернет", "пошукай онлайн",
-            "знайди в інтернет", "знайди онлайн", "в інтернеті"
-        ).any { s.contains(it) }
+            "знайди в інтернет", "знайди онлайн", "в інтернеті",
+            "знайди інформацію", "пошукай інформацію"
+        ).any { n.contains(normalizeMatchText(it)) }
         if (explicit) return true
 
-        return listOf(
+        val freshness = listOf(
             "останні новини", "що нового", "шо нового", "актуальн",
             "сьогодні", "зараз коштує", "ціна зараз", "курс зараз",
-            "остання версія", "новий реліз"
-        ).any { s.contains(it) }
+            "остання версія", "новий реліз", "погода", "розклад",
+            "де купити", "лікар", "лікарня", "клінік", "аптек",
+            "ціна", "наявність", "адрес", "години роботи"
+        ).any { n.contains(normalizeMatchText(it)) }
+        return freshness
     }
 
     private fun runGoogleSearch(
