@@ -66,10 +66,19 @@ class ModelManager(private val context: Context) {
     fun selectedId(): String? = prefs.getString("selected_model", null)
 
     fun setSelected(spec: ModelSpec) {
-        prefs.edit().putString("selected_model", spec.id).apply()
+        prefs.edit()
+            .putString("selected_model", spec.id)
+            .remove("pending_activate")
+            .apply()
     }
 
     fun selected(): ModelSpec? = models.firstOrNull { it.id == selectedId() }
+
+    fun pendingActivationId(): String? = prefs.getString("pending_activate", null)
+
+    fun clearPendingActivation() {
+        prefs.edit().remove("pending_activate").apply()
+    }
 
     fun downloadId(spec: ModelSpec): Long = prefs.getLong("download_" + spec.id, -1L)
 
@@ -85,7 +94,10 @@ class ModelManager(private val context: Context) {
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setDestinationInExternalFilesDir(context, "models", spec.fileName)
         val id = dm.enqueue(request)
-        prefs.edit().putLong("download_" + spec.id, id).apply()
+        prefs.edit()
+            .putLong("download_" + spec.id, id)
+            .putString("pending_activate", spec.id)
+            .apply()
         return id
     }
 
