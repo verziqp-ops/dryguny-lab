@@ -30,6 +30,7 @@ class LocalLlmEngine(private val context: Context) {
 
     private var engine: Engine? = null
     private var conversation: Conversation? = null
+    @Volatile private var activeGenerationConversation: Conversation? = null
     private var historySnapshot: MutableList<StoredMessage> = mutableListOf()
     private var supportsThinkingModel: Boolean = false
     private val loadLock = Any()
@@ -472,6 +473,7 @@ class LocalLlmEngine(private val context: Context) {
         attachments: List<NexusAttachment> = emptyList(),
         onChunk: (String) -> Unit,
         onDone: () -> Unit,
+        onCancelled: () -> Unit = {},
         onError: (String) -> Unit,
     ) {
         val activeEngine = engine
@@ -485,8 +487,10 @@ class LocalLlmEngine(private val context: Context) {
         }
 
         isGenerating = true
+        cancelRequested = false
         scope.launch {
             var temp: Conversation? = null
+            val finished = AtomicBoolean(false)
             try {
                 temp = activeEngine.createConversation(
                     ConversationConfig(
@@ -512,24 +516,33 @@ class LocalLlmEngine(private val context: Context) {
                 }
 
                 val conv = temp
+                activeGenerationConversation = conv
                 conv.sendMessageAsync(
                     Contents.of(parts),
                     object : MessageCallback {
                         override fun onMessage(message: Message) {
                             val token = message.toString()
-                            if (token.isNotEmpty()) main.post { onChunk(token) }
+                            if (token.isNotEmpty() && !cancelRequested) main.post { onChunk(token) }
                         }
 
                         override fun onDone() {
+                            if (!finished.compareAndSet(false, true)) return
                             isGenerating = false
+                            activeGenerationConversation = null
                             try { conv.close() } catch (_: Throwable) {}
-                            main.post { onDone() }
+                            if (cancelRequested) main.post { onCancelled() } else main.post { onDone() }
                         }
 
                         override fun onError(throwable: Throwable) {
+                            if (!finished.compareAndSet(false, true)) return
                             isGenerating = false
+                            activeGenerationConversation = null
                             try { conv.close() } catch (_: Throwable) {}
-                            main.post { onError(friendlyError(throwable)) }
+                            if (cancelRequested || throwable.message.orEmpty().contains("cancel", ignoreCase = true)) {
+                                main.post { onCancelled() }
+                            } else {
+                                main.post { onError(friendlyError(throwable)) }
+                            }
                         }
                     },
                     repetitionPenaltyConfig = RepetitionPenaltyConfig(
@@ -544,9 +557,13 @@ class LocalLlmEngine(private val context: Context) {
                     ),
                 )
             } catch (e: Throwable) {
-                isGenerating = false
-                try { temp?.close() } catch (_: Throwable) {}
-                main.post { onError(friendlyError(e)) }
+                if (finished.compareAndSet(false, true)) {
+                    isGenerating = false
+                    activeGenerationConversation = null
+                    try { temp?.close() } catch (_: Throwable) {}
+                    if (cancelRequested) main.post { onCancelled() }
+                    else main.post { onError(friendlyError(e)) }
+                }
             }
         }
     }
@@ -554,9 +571,8 @@ class LocalLlmEngine(private val context: Context) {
     fun cancelGeneration() {
         if (!isGenerating) return
         cancelRequested = true
-        try {
-            conversation?.cancelProcess()
-        } catch (_: Throwable) {}
+        try { activeGenerationConversation?.cancelProcess() } catch (_: Throwable) {}
+        try { conversation?.cancelProcess() } catch (_: Throwable) {}
     }
 
     private fun languageHint(text: String): String {
@@ -600,6 +616,7 @@ class LocalLlmEngine(private val context: Context) {
         } catch (_: Throwable) {}
 
         conversation = null
+        activeGenerationConversation = null
         engine = null
         isLoaded = false
         mediaPipelineEnabled = false
