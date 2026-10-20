@@ -1095,13 +1095,35 @@ class MainActivity : Activity() {
 
     private fun handleMemory(original: String) {
         val low = original.lowercase(Locale.ROOT)
-        val memory = getSharedPreferences("nexus_memory", MODE_PRIVATE)
-        if (low.contains("що ти пам")) {
-            val value = memory.getString("note", null)
-            addAssistant(if (value.isNullOrBlank()) "Локальна пам’ять порожня." else "Пам’ятаю: $value")
-        } else {
-            memory.edit().putString("note", original.substringAfter(' ', "").trim()).apply()
-            addAssistant("Зберіг локально.")
+        val memory = MemoryStore(this)
+
+        when {
+            low.contains("очисти пам") || low.contains("забудь усе") -> {
+                memory.clear()
+                addAssistant("Локальну пам’ять очищено.")
+            }
+
+            low.contains("що ти пам") || low.contains("шо ти пам") -> {
+                val items = memory.all()
+                addAssistant(
+                    if (items.isEmpty()) {
+                        "Локальна пам’ять порожня."
+                    } else {
+                        items.joinToString(prefix = "Пам’ятаю:\n", separator = "\n") { "• " + it }
+                    }
+                )
+            }
+
+            else -> {
+                val value = original.substringAfter(' ', "").trim()
+                if (value.isBlank()) {
+                    addAssistant("Напиши після «запам’ятай», що саме треба зберегти.")
+                } else {
+                    memory.add(value)
+                    addAssistant("Запам’ятав локально.")
+                    llm.setHistory(activeChat.messages)
+                }
+            }
         }
     }
 
