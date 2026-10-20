@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.Locale
 
 class LocalLlmEngine(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -24,6 +25,7 @@ class LocalLlmEngine(private val context: Context) {
 
     private var engine: Engine? = null
     private var conversation: Conversation? = null
+    private var historySnapshot: MutableList<StoredMessage> = mutableListOf()
 
     @Volatile var isLoaded: Boolean = false
         private set
@@ -38,6 +40,10 @@ class LocalLlmEngine(private val context: Context) {
         context.getSharedPreferences("nexus_settings", Context.MODE_PRIVATE)
             .getBoolean("language_filter", false)
 
+    @Volatile private var replyLanguage: String =
+        context.getSharedPreferences("nexus_settings", Context.MODE_PRIVATE)
+            .getString("reply_language", "auto") ?: "auto"
+
     fun loadModel(path: String, onDone: (Boolean, String) -> Unit) {
         scope.launch {
             closeInternal()
@@ -48,8 +54,6 @@ class LocalLlmEngine(private val context: Context) {
             }
 
             try {
-                // The bundled Low/Medium/Large models are text models. Starting vision/audio
-                // executors for them wastes memory and can leave large native allocations behind.
                 initializeTextOnly(path, 1024)
                 isLoaded = true
                 modelPath = path
@@ -58,7 +62,6 @@ class LocalLlmEngine(private val context: Context) {
                 main.post { onDone(true, "Модель готова") }
             } catch (first: Throwable) {
                 try {
-                    // Lower KV cache fallback for devices that are already under memory pressure.
                     initializeTextOnly(path, 640)
                     isLoaded = true
                     modelPath = path
@@ -89,13 +92,7 @@ class LocalLlmEngine(private val context: Context) {
             )
             newEngine.initialize()
 
-            newConversation = newEngine.createConversation(
-                ConversationConfig(
-                    systemInstruction = Contents.of(Content.Text(systemInstruction())),
-                    maxOutputToken = 256,
-                    enableSpeculativeDecoding = false,
-                )
-            )
+            newConversation = newEngine.createConversation(conversationConfig())
 
             engine = newEngine
             conversation = newConversation
@@ -109,36 +106,102 @@ class LocalLlmEngine(private val context: Context) {
         }
     }
 
-    fun setLanguageFilter(enabled: Boolean) {
-        languageFilter = enabled
-        context.getSharedPreferences("nexus_settings", Context.MODE_PRIVATE)
-            .edit().putBoolean("language_filter", enabled).apply()
-
+    fun setHistory(messages: List<StoredMessage>) {
+        historySnapshot = compactHistory(messages).toMutableList()
         val activeEngine = engine ?: return
         scope.launch {
             try {
                 conversation?.close()
-                conversation = activeEngine.createConversation(
-                    ConversationConfig(
-                        systemInstruction = Contents.of(Content.Text(systemInstruction())),
-                        maxOutputToken = 256,
-                        enableSpeculativeDecoding = false,
-                    )
-                )
+                conversation = activeEngine.createConversation(conversationConfig())
             } catch (_: Throwable) {}
         }
     }
 
+    fun setLanguageFilter(enabled: Boolean) {
+        languageFilter = enabled
+        context.getSharedPreferences("nexus_settings", Context.MODE_PRIVATE)
+            .edit().putBoolean("language_filter", enabled).apply()
+        rebuildConversation()
+    }
+
+    fun setReplyLanguage(mode: String) {
+        replyLanguage = mode
+        context.getSharedPreferences("nexus_settings", Context.MODE_PRIVATE)
+            .edit().putString("reply_language", mode).apply()
+        rebuildConversation()
+    }
+
+    private fun rebuildConversation() {
+        val activeEngine = engine ?: return
+        scope.launch {
+            try {
+                conversation?.close()
+                conversation = activeEngine.createConversation(conversationConfig())
+            } catch (_: Throwable) {}
+        }
+    }
+
+    private fun conversationConfig(): ConversationConfig {
+        val initial = compactHistory(historySnapshot).mapNotNull { m ->
+            when (m.role.lowercase(Locale.ROOT)) {
+                "user" -> Message.user(m.text)
+                "assistant", "model" -> Message.model(m.text)
+                else -> null
+            }
+        }
+        return ConversationConfig(
+            systemInstruction = Contents.of(Content.Text(systemInstruction())),
+            initialMessages = initial,
+            maxOutputToken = 256,
+            enableSpeculativeDecoding = false,
+        )
+    }
+
+    private fun compactHistory(messages: List<StoredMessage>): List<StoredMessage> {
+        if (messages.isEmpty()) return emptyList()
+        val selected = mutableListOf<StoredMessage>()
+        var remainingChars = 3000
+
+        for (m in messages.asReversed()) {
+            if (m.role != "user" && m.role != "assistant" && m.role != "model") continue
+            if (remainingChars <= 0 || selected.size >= 8) break
+
+            val cleaned = m.text.trim()
+            if (cleaned.isEmpty()) continue
+            val take = minOf(cleaned.length, 650, remainingChars)
+            val shortened = cleaned.take(take)
+            selected += StoredMessage(m.role, shortened)
+            remainingChars -= take
+        }
+
+        return selected.asReversed()
+    }
+
     private fun systemInstruction(): String {
         val style =
-            if (languageFilter)
+            if (languageFilter) {
                 "Avoid profanity and unnecessarily explicit wording."
-            else
-                "Do not censor ordinary profanity or rude wording merely because it is offensive; use natural language when appropriate."
+            } else {
+                "Ordinary profanity is allowed. If the user swears or explicitly asks you to swear, you may use natural profanity. " +
+                    "Do not replace ordinary swear words with asterisks, euphemisms, or moralizing warnings merely because they are rude."
+            }
+
+        val languageRule = when (replyLanguage) {
+            "uk" -> "Always answer in Ukrainian unless the user explicitly asks for another language."
+            "en" -> "Always answer in English unless the user explicitly asks for another language."
+            "ru" -> "Always answer in Russian unless the user explicitly asks for another language."
+            "pl" -> "Always answer in Polish unless the user explicitly asks for another language."
+            "de" -> "Always answer in German unless the user explicitly asks for another language."
+            "fr" -> "Always answer in French unless the user explicitly asks for another language."
+            "es" -> "Always answer in Spanish unless the user explicitly asks for another language."
+            else -> "Detect the language of the user's latest message and answer in that same language. Never default to English when the user wrote in another language."
+        }
 
         return "You are NEXUS, a private on-device Android assistant. " +
-            "Answer in the user's language. Be concise and useful. " +
+            languageRule + " " +
+            "Be concise and useful. " +
             style + " " +
+            "Keep conversational continuity using the provided chat history. " +
             "Do not provide instructions that meaningfully facilitate serious harm, malware, credential theft, illegal abuse, or bypassing safety protections. " +
             "Never claim an Android action was executed unless the app reports that it succeeded. " +
             "Every action that changes the phone must be confirmed by the user in the app before execution."
@@ -169,9 +232,10 @@ class LocalLlmEngine(private val context: Context) {
         }
 
         scope.launch {
+            val generated = StringBuilder()
             try {
                 val contents = mutableListOf<Content>()
-                contents += Content.Text(prompt)
+                contents += Content.Text(languageHint(prompt) + prompt)
 
                 if (mediaPipelineEnabled) {
                     attachments.forEach { a ->
@@ -189,10 +253,18 @@ class LocalLlmEngine(private val context: Context) {
                     object : MessageCallback {
                         override fun onMessage(message: Message) {
                             val token = message.toString()
-                            if (token.isNotEmpty()) main.post { onChunk(token) }
+                            if (token.isNotEmpty()) {
+                                generated.append(token)
+                                main.post { onChunk(token) }
+                            }
                         }
 
                         override fun onDone() {
+                            historySnapshot += StoredMessage("user", prompt)
+                            if (generated.isNotEmpty()) {
+                                historySnapshot += StoredMessage("assistant", generated.toString())
+                            }
+                            historySnapshot = compactHistory(historySnapshot).toMutableList()
                             main.post { onDone() }
                         }
 
@@ -204,6 +276,35 @@ class LocalLlmEngine(private val context: Context) {
             } catch (e: Throwable) {
                 main.post { onError(friendlyError(e)) }
             }
+        }
+    }
+
+    private fun languageHint(text: String): String {
+        if (replyLanguage != "auto") return ""
+        val language = detectLanguage(text)
+        return when (language) {
+            "uk" -> "[Reply in Ukrainian.]\n"
+            "ru" -> "[Reply in Russian.]\n"
+            "pl" -> "[Reply in Polish.]\n"
+            "de" -> "[Reply in German.]\n"
+            "fr" -> "[Reply in French.]\n"
+            "es" -> "[Reply in Spanish.]\n"
+            "en" -> "[Reply in English.]\n"
+            else -> "[Reply in the same language as the user.]\n"
+        }
+    }
+
+    private fun detectLanguage(text: String): String {
+        val lower = text.lowercase(Locale.ROOT)
+        return when {
+            Regex("[іїєґ]").containsMatchIn(lower) -> "uk"
+            Regex("[ąćęłńóśźż]").containsMatchIn(lower) -> "pl"
+            Regex("[äöüß]").containsMatchIn(lower) -> "de"
+            Regex("[éèêëàâîïôùûüçœ]").containsMatchIn(lower) -> "fr"
+            Regex("[ñáéíóúü¿¡]").containsMatchIn(lower) -> "es"
+            Regex("[а-яё]").containsMatchIn(lower) -> "ru"
+            Regex("[a-z]").containsMatchIn(lower) -> "en"
+            else -> "auto"
         }
     }
 
