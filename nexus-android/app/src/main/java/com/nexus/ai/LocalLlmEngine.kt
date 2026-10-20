@@ -89,13 +89,12 @@ class LocalLlmEngine(private val context: Context) {
             closeInternal()
             val wantsVision = isVisionModel(path)
             val lowerName = file.name.lowercase(Locale.ROOT)
-            supportsThinkingModel =
-                lowerName.contains("qwen3.5") || lowerName.contains("gemma-4")
+            supportsThinkingModel = lowerName.contains("qwen3.5")
 
             val preferredTokens = when {
-                lowerName.contains("gemma-4-e4b") -> 1152
-                lowerName.contains("gemma-4-e2b") -> 1536
-                file.name.contains("4B", ignoreCase = true) -> 1024
+                lowerName.contains("gemma-4-e4b") -> 2048
+                lowerName.contains("gemma-4-e2b") -> 2048
+                file.name.contains("4B", ignoreCase = true) -> 1536
                 file.name.contains("2B", ignoreCase = true) -> 1280
                 else -> 1024
             }
@@ -116,12 +115,11 @@ class LocalLlmEngine(private val context: Context) {
             } catch (first: Throwable) {
                 try {
                     closeInternal()
-                    supportsThinkingModel =
-                        lowerName.contains("qwen3.5") || lowerName.contains("gemma-4")
+                    supportsThinkingModel = lowerName.contains("qwen3.5")
                     val fallbackTokens =
-                        if (lowerName.contains("gemma-4-e4b")) 768
-                        else if (lowerName.contains("gemma-4-e2b")) 1024
-                        else 640
+                        if (lowerName.contains("gemma-4-e4b")) 1280
+                        else if (lowerName.contains("gemma-4-e2b")) 1536
+                        else 768
                     initialize(path, fallbackTokens, wantsVision, useGpu = false)
                     markLoaded("CPU · сумісний режим")
                 } catch (second: Throwable) {
@@ -232,13 +230,22 @@ class LocalLlmEngine(private val context: Context) {
                 else -> null
             }
         }
+        val modelName = modelPath?.let { File(it).name.lowercase(Locale.ROOT) }.orEmpty()
+        val maxOutput = when {
+            modelName.contains("gemma-4-e4b") -> 896
+            modelName.contains("gemma-4-e2b") -> 768
+            modelName.contains("qwen3.5-4b") -> 768
+            supportsThinkingModel -> 640
+            else -> 512
+        }
+
         return ConversationConfig(
             systemInstruction = Contents.of(Content.Text(systemInstruction())),
             initialMessages = initial,
-            maxOutputToken = if (supportsThinkingModel) 640 else 448,
+            maxOutputToken = maxOutput,
             thinkingConfig =
                 if (supportsThinkingModel)
-                    ThinkingConfig(enableThinking = true, thinkingTokenBudget = 160)
+                    ThinkingConfig(enableThinking = true, thinkingTokenBudget = 128)
                 else null,
             enableSpeculativeDecoding = false,
         )
@@ -248,12 +255,12 @@ class LocalLlmEngine(private val context: Context) {
         if (messages.isEmpty()) return emptyList()
 
         val selected = mutableListOf<StoredMessage>()
-        var remainingChars = 1800
+        var remainingChars = 4200
         var lastAssistantNormalized: String? = null
 
         for (m in messages.asReversed()) {
             if (m.role != "user" && m.role != "assistant" && m.role != "model") continue
-            if (remainingChars <= 0 || selected.size >= 6) break
+            if (remainingChars <= 0 || selected.size >= 10) break
 
             val cleaned = m.text.trim()
             if (cleaned.isEmpty()) continue
@@ -267,7 +274,7 @@ class LocalLlmEngine(private val context: Context) {
                 lastAssistantNormalized = normalized
             }
 
-            val take = minOf(cleaned.length, 560, remainingChars)
+            val take = minOf(cleaned.length, 900, remainingChars)
             selected += StoredMessage(m.role, cleaned.take(take))
             remainingChars -= take
         }
@@ -299,9 +306,10 @@ class LocalLlmEngine(private val context: Context) {
 
         return "You are NEXUS, a private on-device Android assistant. " +
             languageRule + " " +
-            "Be useful and naturally detailed when the request benefits from detail. " +
+            "Be useful and naturally detailed when the request benefits from detail. Do not answer with a one-line fragment when the user clearly expects an explanation. " +
             "The user often types quickly on a phone and may make heavy spelling mistakes, missing letters, swapped letters, or phonetic typos. " +
-            "Infer the most likely intended words from context instead of treating every typo literally. Ask a clarification only when there are genuinely multiple plausible meanings. " +
+            "Infer the most likely intended words from context instead of treating every typo literally. Reconstruct misspelled Ukrainian words, omitted letters, nearby-key mistakes, and short abbreviations from the surrounding turns. Ask a clarification only when there are genuinely multiple plausible meanings. " +
+            "If the user asks what they wrote before, use the recent user messages and answer with the actual previous message or a faithful summary of it. " +
             "If the user asks to explain more, write in more detail, continue, or expand, substantially expand the previous answer with new explanation, steps, and examples instead of repeating it. " +
             style + " " +
             "Answer the actual latest request directly. Never invent permissions, device state, features, or actions you did not receive from the app. " +
