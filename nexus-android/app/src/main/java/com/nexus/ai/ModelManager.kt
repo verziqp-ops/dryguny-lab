@@ -12,6 +12,7 @@ data class ModelSpec(
     val sizeLabel: String,
     val fileName: String,
     val url: String,
+    val expectedBytes: Long,
     val vision: Boolean = false,
     val recommended: Boolean = false,
 )
@@ -31,6 +32,7 @@ class ModelManager(private val context: Context) {
             sizeLabel = "≈1.97 ГБ",
             fileName = "Qwen3.5-2B_int8.litertlm",
             url = "https://huggingface.co/litert-community/Qwen3.5-2B/resolve/main/Qwen3.5-2B_int8.litertlm?download=true",
+            expectedBytes = 2_119_744_416L,
             recommended = true,
         ),
         ModelSpec(
@@ -40,6 +42,7 @@ class ModelManager(private val context: Context) {
             sizeLabel = "≈3.15 ГБ",
             fileName = "Qwen3.5-2B-VL_int8.litertlm",
             url = "https://huggingface.co/litert-community/Qwen3.5-2B/resolve/main/Qwen3.5-2B-VL_int8.litertlm?download=true",
+            expectedBytes = 3_152_378_448L,
             vision = true,
         ),
         ModelSpec(
@@ -49,6 +52,7 @@ class ModelManager(private val context: Context) {
             sizeLabel = "≈2.75 ГБ",
             fileName = "Qwen3.5-4B_mixed_int4.litertlm",
             url = "https://huggingface.co/litert-community/Qwen3.5-4B/resolve/main/Qwen3.5-4B_mixed_int4.litertlm?download=true",
+            expectedBytes = 2_754_070_624L,
         )
     )
 
@@ -66,8 +70,26 @@ class ModelManager(private val context: Context) {
     }
 
     fun isDownloaded(spec: ModelSpec): Boolean {
-        val f = modelFile(spec)
-        return f.exists() && f.length() > 10_000_000
+        val file = modelFile(spec)
+        if (!file.exists()) return false
+
+        // Never treat a partial DownloadManager destination as a valid model.
+        val id = downloadId(spec)
+        if (id > 0L) {
+            val state = query(spec) ?: return false
+            if (state.status != DownloadManager.STATUS_SUCCESSFUL) return false
+        }
+
+        // Allow a very small filesystem/reporting tolerance, but reject partial/corrupt files.
+        val minimumValidBytes = (spec.expectedBytes * 0.995).toLong()
+        return file.length() >= minimumValidBytes
+    }
+
+    fun downloadProgress(spec: ModelSpec): Int? {
+        val state = query(spec) ?: return null
+        if (state.status == DownloadManager.STATUS_SUCCESSFUL) return 100
+        if (state.total <= 0L) return null
+        return ((state.downloaded * 100L) / state.total).toInt().coerceIn(0, 100)
     }
 
     fun selectedId(): String? = prefs.getString("selected_model", null)
@@ -100,6 +122,11 @@ class ModelManager(private val context: Context) {
     fun downloadId(spec: ModelSpec): Long = prefs.getLong("download_" + spec.id, -1L)
 
     fun startDownload(spec: ModelSpec): Long {
+        val oldId = downloadId(spec)
+        if (oldId > 0L) {
+            try { dm.remove(oldId) } catch (_: Exception) {}
+        }
+
         val file = modelFile(spec)
         if (file.exists()) file.delete()
 
@@ -124,13 +151,31 @@ class ModelManager(private val context: Context) {
         val id = downloadId(spec)
         if (id <= 0L) return null
 
-        val cursor = dm.query(DownloadManager.Query().setFilterById(id))
-        cursor.use {
-            if (!it.moveToFirst()) return null
-            val status = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
-            val done = it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
-            val total = it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
-            return ModelDownloadState(status, done, total)
+        return try {
+            val cursor = dm.query(DownloadManager.Query().setFilterById(id))
+            cursor.use {
+                if (!it.moveToFirst()) return null
+                val status = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                val done = it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+                val total = it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+                ModelDownloadState(status, done, total)
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun validateExistingDownloads() {
+        models.forEach { spec ->
+            val file = modelFile(spec)
+            val id = downloadId(spec)
+            if (!file.exists() || id <= 0L) return@forEach
+
+            val state = query(spec)
+            if (state?.status == DownloadManager.STATUS_FAILED) {
+                try { file.delete() } catch (_: Exception) {}
+                if (selectedId() == spec.id) clearSelected()
+            }
         }
     }
 
