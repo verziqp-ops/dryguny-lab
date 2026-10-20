@@ -63,6 +63,11 @@ public class NexusAccessibilityService extends AccessibilityService {
         if(screenAssist!=null) screenAssist.hide();
     }
 
+    public void askAssistantOverlay(String question){
+        if(screenAssist==null) screenAssist=new ScreenAssistController(this);
+        screenAssist.ask(question==null ? "" : question);
+    }
+
     public void highlightText(String query){
         if(query==null || query.trim().isEmpty()) return;
         AccessibilityNodeInfo node=find(getRootInActiveWindow(),query.trim());
