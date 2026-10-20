@@ -1120,7 +1120,7 @@ class MainActivity : Activity() {
 
         var firstRender = true
 
-        fun deleteModel(spec: ModelSpec) {
+        fun deleteModel(spec: ModelSpec, rerender: () -> Unit) {
             AlertDialog.Builder(this)
                 .setTitle("Видалити " + spec.label + "?")
                 .setMessage("Файл моделі " + spec.sizeLabel + " буде видалено з телефона. Його можна завантажити знову.")
@@ -1133,7 +1133,7 @@ class MainActivity : Activity() {
                     }
                     modelManager.deleteModel(spec)
                     updateHeader()
-                    render()
+                    rerender()
                 }
                 .setNegativeButton("Скасувати", null)
                 .show()
@@ -1287,7 +1287,7 @@ class MainActivity : Activity() {
                                 modelManager.cancelDownload(spec)
                                 render()
                             } else {
-                                deleteModel(spec)
+                                deleteModel(spec) { render() }
                             }
                         }
                     }
