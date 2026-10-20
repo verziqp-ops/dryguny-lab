@@ -995,7 +995,7 @@ class MainActivity : Activity() {
             return
         }
 
-        if (feature("web_search") && NetworkState.hasInternet(this) && shouldWebSearch(low)) {
+        if (NetworkState.hasInternet(this) && shouldWebSearch(low)) {
             runGoogleSearch(text, sentAttachments)
             return
         }
@@ -1270,7 +1270,23 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun sendToLocalAi(prompt: String, sentAttachments: List<NexusAttachment>) {
+    private fun sendToLocalAi(
+        prompt: String,
+        sentAttachments: List<NexusAttachment>,
+        screenCancelRetry: Int = 0
+    ) {
+        if (llm.isGenerating && llm.generationOwner == "screen") {
+            llm.cancelGeneration("screen")
+
+            if (screenCancelRetry < 12) {
+                handler.postDelayed({
+                    sendToLocalAi(prompt, sentAttachments, screenCancelRetry + 1)
+                }, 180)
+            } else {
+                addAssistant("Screen Assist зупиняється. Спробуй ще раз.", persist = false)
+            }
+            return
+        }
         if (!llm.isLoaded) {
             if (loadingModel || loadingModelId != null) {
                 addAssistant("Модель ще готується у фоні. Спробуй через кілька секунд.", persist = false)
@@ -1914,7 +1930,6 @@ class MainActivity : Activity() {
         addFeatureSwitch(box, "MultiStep", "multistep")
         addFeatureSwitch(box, "Пошук локальних файлів", "file_search")
         addFeatureSwitch(box, "Локальна пам’ять", "memory")
-        addFeatureSwitch(box, "Google Web Search", "web_search")
 
         AlertDialog.Builder(this)
             .setTitle("Функції NEXUS")
