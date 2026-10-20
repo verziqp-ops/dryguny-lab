@@ -9,6 +9,8 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import kotlinx.coroutines.CoroutineScope
@@ -30,6 +32,7 @@ class ScreenAssistController(
     private var params: WindowManager.LayoutParams? = null
     private var messageView: TextView? = null
     private var liveButton: TextView? = null
+    private var input: EditText? = null
     private var busy = false
     private var live = false
     private var lastScreenSignature = ""
@@ -40,7 +43,6 @@ class ScreenAssistController(
 
         val container = LinearLayout(service).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, 0, 0, 0)
             background = null
         }
 
@@ -48,7 +50,7 @@ class ScreenAssistController(
             text = "Бачу екран."
             setTextColor(Color.WHITE)
             textSize = 14f
-            maxLines = 5
+            maxLines = 6
             setPadding(dp(14), dp(11), dp(14), dp(11))
             background = rounded(Color.rgb(38, 38, 38), 22)
             elevation = dp(8).toFloat()
@@ -79,6 +81,50 @@ class ScreenAssistController(
         }
         panel.addView(drag, LinearLayout.LayoutParams(-1, dp(30)))
 
+        val inputRow = LinearLayout(service).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.BOTTOM
+            setPadding(0, 0, 0, dp(7))
+        }
+
+        input = EditText(service).apply {
+            hint = "Запитай про екран…"
+            setHintTextColor(Color.rgb(165, 165, 165))
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            minLines = 1
+            maxLines = 4
+            gravity = Gravity.TOP or Gravity.START
+            setHorizontallyScrolling(false)
+            inputType =
+                android.text.InputType.TYPE_CLASS_TEXT or
+                    android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                    android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            setPadding(dp(13), dp(10), dp(13), dp(10))
+            background = rounded(Color.rgb(47, 47, 47), 18)
+        }
+        inputRow.addView(input, LinearLayout.LayoutParams(0, -2, 1f))
+
+        val send = TextView(service).apply {
+            text = "↑"
+            textSize = 24f
+            setTextColor(Color.BLACK)
+            gravity = Gravity.CENTER
+            background = rounded(Color.WHITE, 20)
+            setOnClickListener {
+                val q = input?.text?.toString()?.trim().orEmpty()
+                if (q.isNotEmpty() && !busy) {
+                    input?.setText("")
+                    hideIme()
+                    ask(q)
+                }
+            }
+        }
+        inputRow.addView(send, LinearLayout.LayoutParams(dp(42), dp(42)).apply {
+            marginStart = dp(7)
+        })
+        panel.addView(inputRow, LinearLayout.LayoutParams(-1, -2))
+
         val actions = LinearLayout(service).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -97,9 +143,6 @@ class ScreenAssistController(
         actions.addView(liveButton, LinearLayout.LayoutParams(0, dp(42), 1f))
 
         actions.addView(action("Переклад") { translateScreen() }, LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-            marginStart = dp(6)
-        })
-        actions.addView(action("Google") { searchCurrentScreen() }, LinearLayout.LayoutParams(0, dp(42), 1f).apply {
             marginStart = dp(6)
         })
         actions.addView(action("Чат") {
@@ -122,14 +165,14 @@ class ScreenAssistController(
             width,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_SECURE,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = dp(12)
-            y = max(dp(60), bounds.height() - dp(260))
+            y = max(dp(60), bounds.height() - dp(300))
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
         }
 
         var downX = 0f
@@ -150,7 +193,7 @@ class ScreenAssistController(
                     val ny = startY + (event.rawY - downY).toInt()
                     val b = wm.currentWindowMetrics.bounds
                     p.x = nx.coerceIn(0, max(0, b.width() - width))
-                    p.y = ny.coerceIn(0, max(0, b.height() - dp(120)))
+                    p.y = ny.coerceIn(0, max(0, b.height() - dp(130)))
                     try { wm.updateViewLayout(container, p) } catch (_: Exception) {}
                     true
                 }
@@ -165,6 +208,15 @@ class ScreenAssistController(
             container.alpha = 0f
             container.translationY = dp(24).toFloat()
             container.animate().alpha(1f).translationY(0f).setDuration(180).start()
+
+            input?.setOnFocusChangeListener { v, hasFocus ->
+                if (hasFocus) {
+                    handler.postDelayed({
+                        val imm = service.getSystemService(InputMethodManager::class.java)
+                        imm.showSoftInput(v, InputMethodManager.SHOW_IMPLICIT)
+                    }, 120)
+                }
+            }
         } catch (_: Exception) {
             root = null
             params = null
@@ -173,13 +225,21 @@ class ScreenAssistController(
 
     fun ask(question: String) {
         show()
+
         val visible = service.screenText().take(6000)
+        val online = NetworkState.hasInternet(service)
         val prompt = buildString {
             append("Користувач зараз показує екран і питає: ")
             append(question)
-            append("\n\nВідповідай українською в Screen Assist. ")
+            append("\n\nВідповідай українською тільки у Screen Assist. ")
             append("Враховуй помилки в написанні й відновлюй найімовірніший зміст. ")
-            append("Якщо треба натиснути видимий елемент, додай [[tap:ТОЧНИЙ ТЕКСТ ЕЛЕМЕНТА]].\n\n")
+            append("Якщо треба натиснути видимий елемент, додай [[tap:ТОЧНИЙ ТЕКСТ ЕЛЕМЕНТА]]. ")
+            if (online) {
+                append("Інтернет доступний. Якщо питання явно потребує свіжих/актуальних даних або користувач просить пошук, ОБОВ'ЯЗКОВО додай [[google:КОРОТКИЙ ПОШУКОВИЙ ЗАПИТ]] замість вигадування. ")
+            } else {
+                append("Інтернет недоступний, тому не проси веб-пошук і відповідай лише з локальних знань та екрана. ")
+            }
+            append("\n\n")
             if (visible.isNotBlank()) {
                 append("Текст поточного екрана:\n")
                 append(visible)
@@ -190,11 +250,13 @@ class ScreenAssistController(
 
     fun hide() {
         live = false
+        hideIme()
         root?.let {
             try { wm.removeView(it) } catch (_: Exception) {}
         }
         root = null
         params = null
+        input = null
     }
 
     fun onScreenChanged() {
@@ -214,10 +276,13 @@ class ScreenAssistController(
 
     private fun analyzeAssist() {
         val text = service.screenText().take(5000)
+        val online = NetworkState.hasInternet(service)
         val prompt = buildString {
             append("Ти екранний помічник Android. Подивись на поточний екран і дай ОДНУ коротку корисну підказку українською. ")
-            append("Якщо користувачу варто натиснути конкретний видимий елемент, в кінці додай директиву [[tap:ТОЧНИЙ ТЕКСТ ЕЛЕМЕНТА]]. ")
-            append("Якщо для корисної відповіді потрібна свіжа інформація з інтернету, додай [[google:КОРОТКИЙ ПОШУКОВИЙ ЗАПИТ]]. ")
+            append("Якщо користувачу варто натиснути конкретний видимий елемент, в кінці додай [[tap:ТОЧНИЙ ТЕКСТ ЕЛЕМЕНТА]]. ")
+            if (online) {
+                append("Якщо потрібна свіжа інформація з інтернету, додай [[google:КОРОТКИЙ ПОШУКОВИЙ ЗАПИТ]]. ")
+            }
             append("Не вигадуй елементи, яких нема. Якщо підказка не потрібна — скажи це коротко.\n\n")
             append("Текст інтерфейсу:\n")
             append(text)
@@ -231,32 +296,6 @@ class ScreenAssistController(
         askModel(prompt, includeScreen = true)
     }
 
-    private fun searchCurrentScreen() {
-        if (busy) return
-        val visible = service.screenText().replace(" · ", " ").take(260).trim()
-        if (visible.isBlank()) {
-            message("Не бачу тексту для пошуку.")
-            return
-        }
-
-        busy = true
-        message("Шукаю в Google…")
-        scope.launch {
-            val result = GoogleWebSearch.search(visible)
-            if (!result.ok) {
-                busy = false
-                message(result.text)
-                return@launch
-            }
-
-            val prompt = "На екрані користувача є тема:\n" + visible +
-                "\n\nОсь текст результатів Google:\n" + result.text.take(12000) +
-                "\n\nДай коротку корисну відповідь українською лише на основі релевантних результатів."
-            busy = false
-            askModel(prompt, includeScreen = false)
-        }
-    }
-
     private fun askModel(prompt: String, includeScreen: Boolean) {
         if (busy) return
         val engine = NexusRuntime.engine(service)
@@ -265,7 +304,7 @@ class ScreenAssistController(
             return
         }
         if (engine.isGenerating) {
-            message("NEXUS зараз відповідає в чаті.")
+            message("NEXUS зараз відповідає в іншому запиті.")
             return
         }
 
@@ -294,13 +333,15 @@ class ScreenAssistController(
             onDone = {
                 busy = false
                 val full = out.toString().trim()
+
                 val target = Regex("\\[\\[tap:(.+?)]]", RegexOption.IGNORE_CASE)
                     .find(full)?.groupValues?.getOrNull(1)?.trim()
                 if (!target.isNullOrBlank()) service.highlightText(target)
 
                 val googleQuery = Regex("\\[\\[google:(.+?)]]", RegexOption.IGNORE_CASE)
                     .find(full)?.groupValues?.getOrNull(1)?.trim()
-                if (!googleQuery.isNullOrBlank()) {
+
+                if (!googleQuery.isNullOrBlank() && NetworkState.hasInternet(service)) {
                     searchForAssist(googleQuery)
                 } else {
                     val clean = stripDirectives(full)
@@ -321,23 +362,33 @@ class ScreenAssistController(
             .trim()
 
     private fun searchForAssist(query: String) {
-        if (busy) return
+        if (busy || !NetworkState.hasInternet(service)) return
+
         busy = true
-        message("Шукаю в Google…")
+        message("Шукаю…")
         scope.launch {
             val result = GoogleWebSearch.search(query)
             if (!result.ok) {
                 busy = false
-                message(result.text)
+                message("Не вдалося отримати веб-дані. Відповідаю локально.")
                 return@launch
             }
 
             val prompt = "Пошуковий запит: " + query +
-                "\n\nТекст результатів Google:\n" + result.text.take(12000) +
+                "\n\nТекст актуальних результатів пошуку:\n" + result.text.take(12000) +
                 "\n\nДай коротку точну відповідь українською. Не вигадуй нічого поза релевантними результатами."
             busy = false
             askModel(prompt, includeScreen = false)
         }
+    }
+
+    private fun hideIme() {
+        val v = input ?: root ?: return
+        try {
+            service.getSystemService(InputMethodManager::class.java)
+                .hideSoftInputFromWindow(v.windowToken, 0)
+        } catch (_: Exception) {}
+        input?.clearFocus()
     }
 
     private fun message(text: String) {
