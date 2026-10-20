@@ -47,6 +47,11 @@ class LocalLlmEngine(private val context: Context) {
             .getString("reply_language", "auto") ?: "auto"
 
     fun loadModel(path: String, onDone: (Boolean, String) -> Unit) {
+        if (isLoaded && modelPath == path && conversation != null) {
+            main.post { onDone(true, "Модель вже активна") }
+            return
+        }
+
         scope.launch {
             closeInternal()
             val file = File(path)
@@ -64,32 +69,44 @@ class LocalLlmEngine(private val context: Context) {
                 else -> 1024
             }
 
-            try {
-                initialize(path, preferredTokens, wantsVision)
+            val backendPrefs = context.getSharedPreferences("nexus_backend", Context.MODE_PRIVATE)
+            val backendKey = "backend_" + File(path).name.hashCode()
+            val savedBackend = backendPrefs.getString(backendKey, "auto") ?: "auto"
+
+            fun markLoaded(backendName: String, light: Boolean = false) {
                 isLoaded = true
                 modelPath = path
+                backendPrefs.edit().putString(backendKey, backendName).apply()
                 context.getSharedPreferences("nexus_model", Context.MODE_PRIVATE)
                     .edit().putString("model_path", path).apply()
                 main.post {
-                    onDone(
-                        true,
-                        if (wantsVision) "Vision-модель готова" else "Модель готова"
-                    )
+                    val mode = if (backendName == "gpu") "GPU" else "CPU"
+                    val suffix = if (light) " · легкий режим" else ""
+                    onDone(true, mode + suffix)
                 }
-            } catch (first: Throwable) {
+            }
+
+            if (savedBackend != "cpu") {
                 try {
-                    initialize(path, 640, wantsVision)
-                    isLoaded = true
-                    modelPath = path
-                    context.getSharedPreferences("nexus_model", Context.MODE_PRIVATE)
-                        .edit().putString("model_path", path).apply()
-                    main.post {
-                        onDone(
-                            true,
-                            if (wantsVision) "Vision-модель готова у легкому режимі"
-                            else "Модель готова у легкому режимі"
-                        )
-                    }
+                    initialize(path, preferredTokens, wantsVision, useGpu = true)
+                    markLoaded("gpu")
+                    return@launch
+                } catch (_: Throwable) {
+                    backendPrefs.edit().putString(backendKey, "cpu").apply()
+                    closeInternal()
+                    supportsThinkingModel = File(path).name.lowercase(Locale.ROOT).contains("qwen3.5")
+                }
+            }
+
+            try {
+                initialize(path, preferredTokens, wantsVision, useGpu = false)
+                markLoaded("cpu")
+            } catch (_: Throwable) {
+                try {
+                    closeInternal()
+                    supportsThinkingModel = File(path).name.lowercase(Locale.ROOT).contains("qwen3.5")
+                    initialize(path, 640, wantsVision, useGpu = false)
+                    markLoaded("cpu", light = true)
                 } catch (second: Throwable) {
                     closeInternal()
                     main.post { onDone(false, friendlyError(second)) }
@@ -98,27 +115,24 @@ class LocalLlmEngine(private val context: Context) {
         }
     }
 
-    private fun initialize(path: String, maxTokens: Int, vision: Boolean) {
+    private fun initialize(path: String, maxTokens: Int, vision: Boolean, useGpu: Boolean) {
         var newEngine: Engine? = null
         var newConversation: Conversation? = null
         try {
-            val config =
-                if (vision) {
-                    EngineConfig(
-                        modelPath = path,
-                        backend = Backend.CPU(threadCount = 4),
-                        visionBackend = Backend.CPU(threadCount = 4),
-                        maxNumTokens = maxTokens,
-                        cacheDir = context.cacheDir.absolutePath,
-                    )
-                } else {
-                    EngineConfig(
-                        modelPath = path,
-                        backend = Backend.CPU(threadCount = 4),
-                        maxNumTokens = maxTokens,
-                        cacheDir = context.cacheDir.absolutePath,
-                    )
-                }
+            val cache = File(context.cacheDir, "litert_" + File(path).name.hashCode()).apply { mkdirs() }
+            val mainBackend: Backend =
+                if (useGpu) Backend.GPU() else Backend.CPU(threadCount = 4)
+            val visualBackend: Backend? =
+                if (!vision) null
+                else if (useGpu) Backend.GPU() else Backend.CPU(threadCount = 4)
+
+            val config = EngineConfig(
+                modelPath = path,
+                backend = mainBackend,
+                visionBackend = visualBackend,
+                maxNumTokens = maxTokens,
+                cacheDir = cache.absolutePath,
+            )
 
             newEngine = Engine(config)
             newEngine.initialize()
