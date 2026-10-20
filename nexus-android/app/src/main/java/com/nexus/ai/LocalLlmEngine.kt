@@ -72,12 +72,6 @@ class LocalLlmEngine(private val context: Context) {
             supportsThinkingModel = File(path).name.lowercase(Locale.ROOT).contains("qwen3.5")
 
             val preferredTokens = when {
-                wantsVision -> 1024
-                File(path).name.contains("2B", ignoreCase = true) -> 1536
-                else -> 1024
-            }
-
-            val preferredTokens = when {
                 wantsVision -> 768
                 File(path).name.contains("4B", ignoreCase = true) -> 640
                 File(path).name.contains("2B", ignoreCase = true) -> 1024
