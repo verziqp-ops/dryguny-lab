@@ -429,6 +429,35 @@ class LocalLlmEngine(private val context: Context) {
         } catch (_: Throwable) {}
     }
 
+    private fun languageHint(text: String): String {
+        if (replyLanguage != "auto") return ""
+        val language = detectLanguage(text)
+        return when (language) {
+            "uk" -> "[Reply in Ukrainian.]\n"
+            "ru" -> "[Reply in Russian.]\n"
+            "pl" -> "[Reply in Polish.]\n"
+            "de" -> "[Reply in German.]\n"
+            "fr" -> "[Reply in French.]\n"
+            "es" -> "[Reply in Spanish.]\n"
+            "en" -> "[Reply in English.]\n"
+            else -> "[Reply in the same language as the user.]\n"
+        }
+    }
+
+    private fun detectLanguage(text: String): String {
+        val lower = text.lowercase(Locale.ROOT)
+        return when {
+            Regex("[іїєґ]").containsMatchIn(lower) -> "uk"
+            Regex("[ąćęłńóśźż]").containsMatchIn(lower) -> "pl"
+            Regex("[äöüß]").containsMatchIn(lower) -> "de"
+            Regex("[éèêëàâîïôùûüçœ]").containsMatchIn(lower) -> "fr"
+            Regex("[ñáéíóúü¿¡]").containsMatchIn(lower) -> "es"
+            Regex("[а-яё]").containsMatchIn(lower) -> "ru"
+            Regex("[a-z]").containsMatchIn(lower) -> "en"
+            else -> "auto"
+        }
+    }
+
     fun close() {
         scope.launch { closeInternal() }
     }
