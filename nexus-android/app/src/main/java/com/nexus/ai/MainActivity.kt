@@ -1072,7 +1072,7 @@ class MainActivity : Activity() {
                     llm.loadModel(file.absolutePath) { ok, message ->
                         loadingModel = false
                         updateHeader()
-                        if (ok) Toast.makeText(this, "Модель активна", Toast.LENGTH_SHORT).show()
+                        if (ok) Toast.makeText(this@MainActivity, "Модель активна", Toast.LENGTH_SHORT).show()
                         else addAssistant(message)
                     }
                 }
