@@ -1062,7 +1062,15 @@ class MainActivity : Activity() {
             s.contains("подивися екран") || s.contains("переклади екран") || s.contains("розкажи що тут")
 
     private fun handleScreenQuestion(question: String, originalAttachments: List<NexusAttachment>) {
-        val visibleText = NexusAccessibilityService.get()?.screenText().orEmpty()
+        val service = NexusAccessibilityService.get()
+
+        if (ScreenCaptureService.isRunning && service != null) {
+            service.showAssistantOverlay()
+            service.askAssistantOverlay(question)
+            return
+        }
+
+        val visibleText = service?.screenText().orEmpty()
         val media = originalAttachments.toMutableList()
 
         ScreenCaptureService.latestCapturePath?.let { path ->
