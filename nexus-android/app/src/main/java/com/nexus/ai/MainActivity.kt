@@ -175,10 +175,7 @@ class MainActivity : Activity() {
     private fun buildUi(): LinearLayout {
         val outer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.rgb(3, 4, 6), Color.rgb(7, 10, 14), Color.BLACK)
-            )
+            setBackgroundColor(Color.BLACK)
             clipToPadding = false
         }
 
@@ -219,7 +216,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(8), dp(4), dp(8), dp(4))
-            background = glassDrawable(0, 22, 18)
+            setBackgroundColor(Color.BLACK)
         }
 
         val menu = iconButton(R.drawable.ic_menu, "Чати")
@@ -354,7 +351,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(10), dp(5), dp(10), dp(9))
-            setBackgroundColor(Color.TRANSPARENT)
+            setBackgroundColor(Color.BLACK)
         }
 
         val attach = iconButton(R.drawable.ic_plus, "Додати")
@@ -1447,7 +1444,6 @@ class MainActivity : Activity() {
 
             if (ok) {
                 modelManager.setSelected(spec)
-                llm.setHistory(activeChat.messages)
                 Toast.makeText(this, spec.label + " активна", Toast.LENGTH_SHORT).show()
             } else {
                 modelManager.clearSelected()
@@ -2042,16 +2038,15 @@ class MainActivity : Activity() {
         fillAlpha: Int = 34,
         strokeAlpha: Int = 42
     ): GradientDrawable {
-        return GradientDrawable(
-            GradientDrawable.Orientation.TL_BR,
-            intArrayOf(
-                Color.argb(fillAlpha, 255, 255, 255),
-                Color.argb((fillAlpha * 0.42f).toInt(), 130, 160, 200),
-                Color.argb((fillAlpha * 0.24f).toInt(), 255, 255, 255)
-            )
-        ).apply {
+        val shade = when {
+            fillAlpha >= 55 -> Color.rgb(36, 36, 36)
+            fillAlpha >= 40 -> Color.rgb(29, 29, 29)
+            fillAlpha >= 28 -> Color.rgb(23, 23, 23)
+            else -> Color.rgb(17, 17, 17)
+        }
+        return GradientDrawable().apply {
+            setColor(shade)
             cornerRadius = if (radiusDp <= 0) 0f else dp(radiusDp).toFloat()
-            setStroke(dp(1), Color.argb(strokeAlpha, 255, 255, 255))
         }
     }
 
@@ -2083,13 +2078,9 @@ class MainActivity : Activity() {
             isAllCaps = false
             setTextColor(if (primary) Color.BLACK else Color.WHITE)
             textSize = 14f
-            background = if (primary) {
-                GradientDrawable().apply {
-                    setColor(Color.argb(235, 255, 255, 255))
-                    cornerRadius = dp(18).toFloat()
-                }
-            } else {
-                glassDrawable(18, 44, 52)
+            background = GradientDrawable().apply {
+                setColor(if (primary) Color.WHITE else Color.rgb(35, 35, 35))
+                cornerRadius = dp(18).toFloat()
             }
             addPressAnimation(this)
         }
