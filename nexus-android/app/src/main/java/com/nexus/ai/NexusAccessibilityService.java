@@ -136,17 +136,59 @@ public class NexusAccessibilityService extends AccessibilityService {
     }
 
     private String settingAction(String s){
-        if(any(s,"пам'ять телефона","пам’ять телефона","память телефона","сховище телефона","storage")) return Settings.ACTION_INTERNAL_STORAGE_SETTINGS;
-        if(any(s,"wifi","wi-fi","вайфай","вай фай")) return Settings.ACTION_WIFI_SETTINGS;
-        if(any(s,"bluetooth","блютуз")) return Settings.ACTION_BLUETOOTH_SETTINGS;
-        if(any(s,"батаре","акумулятор")) return Settings.ACTION_BATTERY_SAVER_SETTINGS;
-        if(any(s,"налаштування екрана","яскравіст","display settings")) return Settings.ACTION_DISPLAY_SETTINGS;
-        if(any(s,"сповіщення","уведомлен")) return "android.settings.NOTIFICATION_SETTINGS";
-        if(any(s,"всі додатки","налаштування додатків","програми")) return Settings.ACTION_APPLICATION_SETTINGS;
-        if(any(s,"спец можливост","accessibility")) return Settings.ACTION_ACCESSIBILITY_SETTINGS;
-        if(any(s,"безпек","security")) return Settings.ACTION_SECURITY_SETTINGS;
-        if(any(s,"головні налаштування","відкрий налаштування","зайди в налаштування")) return Settings.ACTION_SETTINGS;
+        String n=normalize(s);
+        if(fuzzyWord(n,"інтернет",2) || fuzzyWord(n,"мережа",2) || any(n,"network")) return Settings.ACTION_WIRELESS_SETTINGS;
+        if(any(n,"память телефона","сховище телефона","storage") || fuzzyWord(n,"память",2)) return Settings.ACTION_INTERNAL_STORAGE_SETTINGS;
+        if(any(n,"wifi","wi fi","вай фай") || fuzzyWord(n,"вайфай",2)) return Settings.ACTION_WIFI_SETTINGS;
+        if(any(n,"bluetooth") || fuzzyWord(n,"блютуз",2)) return Settings.ACTION_BLUETOOTH_SETTINGS;
+        if(fuzzyWord(n,"батарея",2) || any(n,"акумулятор")) return Settings.ACTION_BATTERY_SAVER_SETTINGS;
+        if(any(n,"display settings") || fuzzyWord(n,"яскравість",3) || fuzzyWord(n,"екран",2)) return Settings.ACTION_DISPLAY_SETTINGS;
+        if(fuzzyWord(n,"сповіщення",3) || any(n,"уведомлен")) return "android.settings.NOTIFICATION_SETTINGS";
+        if(fuzzyWord(n,"додатки",2) || any(n,"програми")) return Settings.ACTION_APPLICATION_SETTINGS;
+        if(fuzzyWord(n,"спецможливості",4) || any(n,"accessibility")) return Settings.ACTION_ACCESSIBILITY_SETTINGS;
+        if(fuzzyWord(n,"безпека",2) || any(n,"security")) return Settings.ACTION_SECURITY_SETTINGS;
+        if(fuzzyWord(n,"налаштування",4)) return Settings.ACTION_SETTINGS;
         return null;
+    }
+
+    private String normalize(String value){
+        if(value==null) return "";
+        return value.toLowerCase(Locale.ROOT)
+                .replace('’','\'')
+                .replace('ʼ','\'')
+                .replaceAll("[^а-яіїєґa-z0-9' ]+"," ")
+                .replaceAll("\\s+"," ")
+                .trim();
+    }
+
+    private boolean fuzzyWord(String text,String target,int maxDistance){
+        String t=normalize(target);
+        String[] words=normalize(text).split(" ");
+        for(String word:words){
+            if(word.isEmpty()) continue;
+            if(word.equals(t) || word.startsWith(t)) return true;
+            if(distance(word,t)<=maxDistance) return true;
+        }
+        return false;
+    }
+
+    private int distance(String a,String b){
+        int[] prev=new int[b.length()+1];
+        int[] cur=new int[b.length()+1];
+        for(int j=0;j<=b.length();j++) prev[j]=j;
+
+        for(int i=0;i<a.length();i++){
+            cur[0]=i+1;
+            for(int j=0;j<b.length();j++){
+                int cost=a.charAt(i)==b.charAt(j)?0:1;
+                cur[j+1]=Math.min(
+                        Math.min(cur[j]+1,prev[j+1]+1),
+                        prev[j]+cost
+                );
+            }
+            int[] swap=prev; prev=cur; cur=swap;
+        }
+        return prev[b.length()];
     }
 
     public String screenText(){
