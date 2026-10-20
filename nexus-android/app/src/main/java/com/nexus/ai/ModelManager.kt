@@ -26,34 +26,34 @@ data class ModelDownloadState(
 class ModelManager(private val context: Context) {
     val models = listOf(
         ModelSpec(
-            id = "smart",
-            label = "Fast",
-            description = "Qwen3.5 2B INT8. Швидша й легша, але помітно слабша за Smart 4B.",
-            sizeLabel = "≈1.97 ГБ",
-            fileName = "Qwen3.5-2B_int8.litertlm",
-            url = "https://huggingface.co/litert-community/Qwen3.5-2B/resolve/main/Qwen3.5-2B_int8.litertlm?download=true",
-            expectedBytes = 2_119_744_416L,
-            recommended = false,
-        ),
-        ModelSpec(
-            id = "vision",
-            label = "Vision",
-            description = "Qwen3.5 2B VL. Та сама сильніша модель + реальне розуміння фото й скріншотів.",
-            sizeLabel = "≈3.15 ГБ",
-            fileName = "Qwen3.5-2B-VL_int8.litertlm",
-            url = "https://huggingface.co/litert-community/Qwen3.5-2B/resolve/main/Qwen3.5-2B-VL_int8.litertlm?download=true",
-            expectedBytes = 3_152_378_448L,
+            id = "gemma4_e2b",
+            label = "Fast Vision",
+            description = "Gemma 4 E2B. Значно розумніша за стару Vision 2B, підтримує текст, фото й екран.",
+            sizeLabel = "≈2.58 ГБ",
+            fileName = "gemma-4-E2B-it.litertlm",
+            url = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm?download=true",
+            expectedBytes = 2_583_085_056L,
             vision = true,
         ),
         ModelSpec(
+            id = "gemma4_e4b",
+            label = "Smart Vision",
+            description = "Gemma 4 E4B. Найрозумніша локальна модель NEXUS для Pixel 7 Pro: текст, фото, екран і thinking.",
+            sizeLabel = "≈3.65 ГБ",
+            fileName = "gemma-4-E4B-it.litertlm",
+            url = "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/main/gemma-4-E4B-it.litertlm?download=true",
+            expectedBytes = 3_654_467_584L,
+            vision = true,
+            recommended = true,
+        ),
+        ModelSpec(
             id = "max",
-            label = "Smart",
-            description = "Qwen3.5 4B Mixed INT4. Основна рекомендована модель: помітно розумніша за Fast 2B.",
+            label = "Smart Text",
+            description = "Qwen3.5 4B Mixed INT4. Хороша текстова модель без повного multimodal режиму.",
             sizeLabel = "≈2.75 ГБ",
             fileName = "Qwen3.5-4B_mixed_int4.litertlm",
             url = "https://huggingface.co/litert-community/Qwen3.5-4B/resolve/main/Qwen3.5-4B_mixed_int4.litertlm?download=true",
             expectedBytes = 2_754_070_624L,
-            recommended = true,
         )
     )
 
@@ -62,7 +62,7 @@ class ModelManager(private val context: Context) {
 
     init {
         cleanupLegacyModelsOnce()
-        promoteSmart4BOnce()
+        migrateToSmarterModelsOnce()
     }
 
     fun modelFile(spec: ModelSpec): File {
@@ -75,14 +75,12 @@ class ModelManager(private val context: Context) {
         val file = modelFile(spec)
         if (!file.exists()) return false
 
-        // Never treat a partial DownloadManager destination as a valid model.
         val id = downloadId(spec)
         if (id > 0L) {
             val state = query(spec) ?: return false
             if (state.status != DownloadManager.STATUS_SUCCESSFUL) return false
         }
 
-        // Allow a very small filesystem/reporting tolerance, but reject partial/corrupt files.
         val minimumValidBytes = (spec.expectedBytes * 0.995).toLong()
         return file.length() >= minimumValidBytes
     }
@@ -124,9 +122,7 @@ class ModelManager(private val context: Context) {
             false
         }
 
-        prefs.edit()
-            .remove("download_" + spec.id)
-            .apply()
+        prefs.edit().remove("download_" + spec.id).apply()
 
         if (pendingActivationId() == spec.id) clearPendingActivation()
         if (wasSelected) clearSelected()
@@ -216,17 +212,28 @@ class ModelManager(private val context: Context) {
         }
     }
 
-    private fun promoteSmart4BOnce() {
-        if (prefs.getBoolean("promoted_4b_v09", false)) return
+    private fun migrateToSmarterModelsOnce() {
+        if (prefs.getBoolean("smart_models_v12", false)) return
 
-        val oldFastSelected = selectedId() == "smart"
-        val smart4b = models.firstOrNull { it.id == "max" }
-
-        if (oldFastSelected && smart4b != null && isDownloaded(smart4b)) {
-            setSelected(smart4b)
+        val dir = context.getExternalFilesDir("models")
+        val weak = listOf(
+            "Qwen3.5-2B_int8.litertlm",
+            "Qwen3.5-2B-VL_int8.litertlm",
+        )
+        weak.forEach { name ->
+            try { File(dir, name).delete() } catch (_: Exception) {}
         }
 
-        prefs.edit().putBoolean("promoted_4b_v09", true).apply()
+        val oldSelected = selectedId()
+        if (oldSelected == "smart" || oldSelected == "vision") {
+            clearSelected()
+        }
+
+        prefs.edit()
+            .remove("download_smart")
+            .remove("download_vision")
+            .putBoolean("smart_models_v12", true)
+            .apply()
     }
 
     private fun cleanupLegacyModelsOnce() {
