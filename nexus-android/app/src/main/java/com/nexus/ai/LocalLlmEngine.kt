@@ -88,13 +88,16 @@ class LocalLlmEngine(private val context: Context) {
 
             closeInternal()
             val wantsVision = isVisionModel(path)
-            supportsThinkingModel = file.name.lowercase(Locale.ROOT).contains("qwen3.5")
+            val lowerName = file.name.lowercase(Locale.ROOT)
+            supportsThinkingModel =
+                lowerName.contains("qwen3.5") || lowerName.contains("gemma-4")
 
             val preferredTokens = when {
-                wantsVision -> 640
-                file.name.contains("4B", ignoreCase = true) -> 512
-                file.name.contains("2B", ignoreCase = true) -> 768
-                else -> 640
+                lowerName.contains("gemma-4-e4b") -> 1152
+                lowerName.contains("gemma-4-e2b") -> 1536
+                file.name.contains("4B", ignoreCase = true) -> 1024
+                file.name.contains("2B", ignoreCase = true) -> 1280
+                else -> 1024
             }
 
             fun markLoaded(message: String) {
@@ -105,23 +108,22 @@ class LocalLlmEngine(private val context: Context) {
                 finishModelLoad(path, true, message)
             }
 
-            try {
-                initialize(path, preferredTokens, wantsVision)
-                markLoaded("CPU")
-            } catch (first: Throwable) {
-                // 4B already starts with the low-memory configuration.
-                // Retrying the same huge model used to make activation take several minutes.
-                if (file.name.contains("4B", ignoreCase = true) || preferredTokens <= 512) {
-                    closeInternal()
-                    finishModelLoad(path, false, friendlyError(first))
-                    return@launch
-                }
+            val preferGpu = lowerName.contains("gemma-4")
 
+            try {
+                initialize(path, preferredTokens, wantsVision, useGpu = preferGpu)
+                markLoaded(if (preferGpu) "GPU" else "CPU")
+            } catch (first: Throwable) {
                 try {
                     closeInternal()
-                    supportsThinkingModel = file.name.lowercase(Locale.ROOT).contains("qwen3.5")
-                    initialize(path, 512, wantsVision)
-                    markLoaded("CPU · легкий режим")
+                    supportsThinkingModel =
+                        lowerName.contains("qwen3.5") || lowerName.contains("gemma-4")
+                    val fallbackTokens =
+                        if (lowerName.contains("gemma-4-e4b")) 768
+                        else if (lowerName.contains("gemma-4-e2b")) 1024
+                        else 640
+                    initialize(path, fallbackTokens, wantsVision, useGpu = false)
+                    markLoaded("CPU · сумісний режим")
                 } catch (second: Throwable) {
                     closeInternal()
                     finishModelLoad(path, false, friendlyError(second))
@@ -143,15 +145,21 @@ class LocalLlmEngine(private val context: Context) {
         }
     }
 
-    private fun initialize(path: String, maxTokens: Int, vision: Boolean) {
+    private fun initialize(path: String, maxTokens: Int, vision: Boolean, useGpu: Boolean) {
         var newEngine: Engine? = null
         var newConversation: Conversation? = null
         try {
             val cache = File(context.cacheDir, "litert_" + File(path).name.hashCode()).apply { mkdirs() }
+            val mainBackend: Backend =
+                if (useGpu) Backend.GPU() else Backend.CPU(threadCount = 4)
+            val visualBackend: Backend? =
+                if (!vision) null
+                else if (useGpu) Backend.GPU() else Backend.CPU(threadCount = 4)
+
             val config = EngineConfig(
                 modelPath = path,
-                backend = Backend.CPU(threadCount = 4),
-                visionBackend = if (vision) Backend.CPU(threadCount = 4) else null,
+                backend = mainBackend,
+                visionBackend = visualBackend,
                 maxNumTokens = maxTokens,
                 cacheDir = cache.absolutePath,
             )
@@ -174,7 +182,11 @@ class LocalLlmEngine(private val context: Context) {
 
     private fun isVisionModel(path: String): Boolean {
         val name = File(path).name.lowercase(Locale.ROOT)
-        return "-vl_" in name || "-vl." in name || "vision" in name
+        return "-vl_" in name ||
+            "-vl." in name ||
+            "vision" in name ||
+            "gemma-4-" in name ||
+            "gemma-3n-" in name
     }
 
     fun setHistory(messages: List<StoredMessage>) {
@@ -223,10 +235,10 @@ class LocalLlmEngine(private val context: Context) {
         return ConversationConfig(
             systemInstruction = Contents.of(Content.Text(systemInstruction())),
             initialMessages = initial,
-            maxOutputToken = if (supportsThinkingModel) 384 else 256,
+            maxOutputToken = if (supportsThinkingModel) 640 else 448,
             thinkingConfig =
                 if (supportsThinkingModel)
-                    ThinkingConfig(enableThinking = true, thinkingTokenBudget = 128)
+                    ThinkingConfig(enableThinking = true, thinkingTokenBudget = 160)
                 else null,
             enableSpeculativeDecoding = false,
         )
@@ -268,7 +280,8 @@ class LocalLlmEngine(private val context: Context) {
             if (languageFilter) {
                 "Avoid profanity and unnecessarily explicit wording."
             } else {
-                "Ordinary profanity is allowed. You may naturally use profanity when it fits the conversation or when the user asks for it. " +
+                "Ordinary profanity, slang, and rude language are allowed. You may naturally use profanity when it fits the conversation or when the user asks for it. " +
+                    "Never refuse a harmless request merely because it contains swear words, insults, or vulgar wording. " +
                     "Do not replace ordinary swear words with asterisks or euphemisms merely because they are rude. " +
                     "Do not add moralizing warnings about ordinary profanity."
             }
@@ -286,7 +299,10 @@ class LocalLlmEngine(private val context: Context) {
 
         return "You are NEXUS, a private on-device Android assistant. " +
             languageRule + " " +
-            "Be concise and useful. " +
+            "Be useful and naturally detailed when the request benefits from detail. " +
+            "The user often types quickly on a phone and may make heavy spelling mistakes, missing letters, swapped letters, or phonetic typos. " +
+            "Infer the most likely intended words from context instead of treating every typo literally. Ask a clarification only when there are genuinely multiple plausible meanings. " +
+            "If the user asks to explain more, write in more detail, continue, or expand, substantially expand the previous answer with new explanation, steps, and examples instead of repeating it. " +
             style + " " +
             "Answer the actual latest request directly. Never invent permissions, device state, features, or actions you did not receive from the app. " +
             "For capability questions, describe only real NEXUS capabilities from the provided context; do not produce placeholder lists or repetitive filler. " +
