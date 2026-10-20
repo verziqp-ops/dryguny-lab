@@ -1,6 +1,7 @@
 package com.nexus.ai
 
 import android.content.Context
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import com.google.ai.edge.litertlm.Backend
@@ -107,7 +108,8 @@ class LocalLlmEngine(private val context: Context) {
                 finishModelLoad(path, true, message)
             }
 
-            val preferGpu = lowerName.contains("gemma-4")
+            val isPixel7Pro = Build.MODEL.contains("Pixel 7 Pro", ignoreCase = true)
+            val preferGpu = lowerName.contains("gemma-4") && !isPixel7Pro
 
             try {
                 initialize(path, preferredTokens, wantsVision, useGpu = preferGpu)
