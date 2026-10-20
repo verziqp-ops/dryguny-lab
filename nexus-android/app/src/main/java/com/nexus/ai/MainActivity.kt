@@ -2052,59 +2052,73 @@ class MainActivity : Activity() {
 
     private fun addStreamingAssistant(): TextView {
         val row = messageRow(false)
-        val bubble = TextView(this).apply {
-            setTextColor(Color.rgb(238, 238, 238))
+        val body = TextView(this).apply {
+            setTextColor(Color.rgb(242, 242, 242))
             textSize = 16f
-            setLineSpacing(0f, 1.08f)
-            setPadding(dp(14), dp(10), dp(14), dp(10))
-            background = rounded(Color.rgb(18, 18, 18), 18)
+            setLineSpacing(dp(3).toFloat(), 1.07f)
+            setPadding(dp(4), dp(6), dp(4), dp(8))
+            background = null
         }
-        row.addView(bubble, LinearLayout.LayoutParams(0, -2, 0.94f))
-        chatContainer.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+        row.addView(body, LinearLayout.LayoutParams(-1, -2))
+        chatContainer.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
         scrollBottom()
-        return bubble
+        return body
     }
 
     private fun addMessageView(role: String, text: String, attachmentNames: List<String>) {
         val user = role == "user"
         val row = messageRow(user)
 
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(10), dp(14), dp(10))
-            background = if (user) glassDrawable(18, 58, 62) else glassDrawable(18, 28, 36)
-        }
-
-        attachmentNames.forEach { name ->
-            val attachment = TextView(this).apply {
-                this.text = name
-                setTextColor(Color.rgb(190, 190, 190))
-                textSize = 12f
-                maxLines = 1
-                setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_file, 0, 0, 0)
-                compoundDrawablePadding = dp(6)
+        if (user) {
+            val box = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(16), dp(11), dp(16), dp(11))
+                background = rounded(Color.rgb(47, 47, 47), 24)
             }
-            box.addView(attachment, LinearLayout.LayoutParams(-1, dp(28)))
+
+            attachmentNames.forEach { name ->
+                val attachment = TextView(this).apply {
+                    this.text = name
+                    setTextColor(Color.rgb(200, 200, 200))
+                    textSize = 12f
+                    maxLines = 1
+                    setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_file, 0, 0, 0)
+                    compoundDrawablePadding = dp(6)
+                }
+                box.addView(attachment, LinearLayout.LayoutParams(-1, dp(28)))
+            }
+
+            val body = TextView(this).apply {
+                this.text = text
+                setTextColor(Color.rgb(245, 245, 245))
+                textSize = 16f
+                setTextIsSelectable(true)
+                setLineSpacing(dp(2).toFloat(), 1.06f)
+            }
+            box.addView(body, LinearLayout.LayoutParams(-1, -2))
+
+            row.addView(box, LinearLayout.LayoutParams(0, -2, 0.84f))
+        } else {
+            val body = TextView(this).apply {
+                this.text = text
+                setTextColor(Color.rgb(242, 242, 242))
+                textSize = 16f
+                setTextIsSelectable(true)
+                setLineSpacing(dp(3).toFloat(), 1.07f)
+                setPadding(dp(4), dp(6), dp(4), dp(8))
+                background = null
+            }
+            row.addView(body, LinearLayout.LayoutParams(-1, -2))
         }
 
-        val body = TextView(this).apply {
-            this.text = text
-            setTextColor(Color.rgb(242, 242, 242))
-            textSize = 16f
-            setTextIsSelectable(true)
-            setLineSpacing(0f, 1.08f)
-        }
-        box.addView(body, LinearLayout.LayoutParams(-1, -2))
-
-        row.addView(box, LinearLayout.LayoutParams(0, -2, if (user) 0.84f else 0.94f))
-        chatContainer.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+        chatContainer.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
         scrollBottom()
     }
 
     private fun messageRow(user: Boolean): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = if (user) Gravity.END else Gravity.START
-        if (user) setPadding(dp(52), 0, 0, 0) else setPadding(0, 0, dp(20), 0)
+        if (user) setPadding(dp(72), 0, 0, 0) else setPadding(dp(2), 0, dp(8), 0)
     }
 
     private fun updateHeader() {
