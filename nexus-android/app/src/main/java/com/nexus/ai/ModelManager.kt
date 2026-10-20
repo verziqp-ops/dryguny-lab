@@ -108,6 +108,41 @@ class ModelManager(private val context: Context) {
         context.getSharedPreferences("nexus_model", Context.MODE_PRIVATE).edit().remove("model_path").apply()
     }
 
+    fun deleteModel(spec: ModelSpec): Boolean {
+        val id = downloadId(spec)
+        if (id > 0L) {
+            try { dm.remove(id) } catch (_: Exception) {}
+        }
+
+        val wasSelected = selectedId() == spec.id
+        val file = modelFile(spec)
+        val deleted = try {
+            !file.exists() || file.delete()
+        } catch (_: Exception) {
+            false
+        }
+
+        prefs.edit()
+            .remove("download_" + spec.id)
+            .apply()
+
+        if (pendingActivationId() == spec.id) clearPendingActivation()
+        if (wasSelected) clearSelected()
+        return deleted
+    }
+
+    fun cancelDownload(spec: ModelSpec) {
+        val id = downloadId(spec)
+        if (id > 0L) {
+            try { dm.remove(id) } catch (_: Exception) {}
+        }
+        prefs.edit()
+            .remove("download_" + spec.id)
+            .remove("pending_activate")
+            .apply()
+        try { modelFile(spec).delete() } catch (_: Exception) {}
+    }
+
     fun selected(): ModelSpec? = models.firstOrNull { it.id == selectedId() }
 
     fun byPath(path: String?): ModelSpec? =
