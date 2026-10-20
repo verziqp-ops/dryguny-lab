@@ -100,12 +100,14 @@ class MainActivity : Activity() {
         fileIndex = LocalFileIndex(this)
         llm = LocalLlmEngine(this)
         modelManager = ModelManager(this)
+        modelManager.validateExistingDownloads()
         conversationStore = ConversationStore(this)
 
         chats = conversationStore.migrateLegacyIfNeeded()
         val wanted = conversationStore.activeId()
         activeChat = chats.firstOrNull { it.id == wanted } ?: chats.first()
         cleanLegacyNoise()
+        cleanModelDownloadNoise()
         llm.setHistory(activeChat.messages)
 
         root = buildUi()
@@ -313,6 +315,30 @@ class MainActivity : Activity() {
 
         if (changed) conversationStore.save(chats)
         prefs.edit().putBoolean("cleanup_041", true).apply()
+    }
+
+    private fun cleanModelDownloadNoise() {
+        if (prefs.getBoolean("cleanup_061", false)) return
+
+        val fragments = listOf(
+            "Ця модель несумісна з поточною версією NEXUS",
+            "Не вистачило вільної пам’яті для запуску відповіді",
+            "Модель не змогла відповісти"
+        )
+
+        var changed = false
+        chats.forEach { chat ->
+            val before = chat.messages.size
+            chat.messages.removeAll { message ->
+                message.role == "assistant" && fragments.any { fragment ->
+                    message.text.contains(fragment, ignoreCase = true)
+                }
+            }
+            if (chat.messages.size != before) changed = true
+        }
+
+        if (changed) conversationStore.save(chats)
+        prefs.edit().putBoolean("cleanup_061", true).apply()
     }
 
     private fun renderActiveChat() {
@@ -963,6 +989,7 @@ class MainActivity : Activity() {
                 val state = modelManager.query(spec)
                 val running = !downloaded && state != null &&
                     (state.status == DownloadManager.STATUS_RUNNING || state.status == DownloadManager.STATUS_PENDING)
+                val corruptFinished = !downloaded && state?.status == DownloadManager.STATUS_SUCCESSFUL
 
                 val status = TextView(this).apply {
                     setTextColor(Color.rgb(165, 165, 165))
@@ -974,6 +1001,7 @@ class MainActivity : Activity() {
                             val pct = if (state!!.total > 0) (state.downloaded * 100 / state.total) else -1
                             if (pct >= 0) "Завантаження $pct%" else "Завантаження"
                         }
+                        corruptFinished -> "Файл недокачаний або пошкоджений"
                         state?.status == DownloadManager.STATUS_FAILED -> "Завантаження не вдалося"
                         else -> "Не завантажена"
                     }
@@ -986,6 +1014,7 @@ class MainActivity : Activity() {
                         downloaded && selected -> "Активна"
                         downloaded -> "Використовувати"
                         running -> "Завантажується"
+                        corruptFinished -> "Завантажити знову"
                         else -> "Завантажити"
                     }
                     isEnabled = !(downloaded && selected) && !running
@@ -1050,6 +1079,10 @@ class MainActivity : Activity() {
     }
 
     private fun useModel(spec: ModelSpec, dialog: Dialog?) {
+        if (!modelManager.isDownloaded(spec)) {
+            Toast.makeText(this, "Дочекайся повного завантаження моделі", Toast.LENGTH_SHORT).show()
+            return
+        }
         val file = modelManager.modelFile(spec)
         if (!file.exists()) return
         loadingModel = true
@@ -1093,14 +1126,40 @@ class MainActivity : Activity() {
 
     private fun loadSelectedModel() {
         val selected = modelManager.selected()
-        if (selected != null && modelManager.isDownloaded(selected)) {
-            loadingModel = true
-            llm.loadModel(modelManager.modelFile(selected).absolutePath) { _, _ ->
+        if (selected != null) {
+            if (!modelManager.isDownloaded(selected)) {
+                modelManager.clearSelected()
                 loadingModel = false
                 updateHeader()
+                return
             }
-        } else {
-            llm.loadSaved { _, _ -> updateHeader() }
+
+            loadingModel = true
+            llm.loadModel(modelManager.modelFile(selected).absolutePath) { ok, message ->
+                loadingModel = false
+                if (!ok) {
+                    modelManager.clearSelected()
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                }
+                updateHeader()
+            }
+            return
+        }
+
+        val savedPath = getSharedPreferences("nexus_model", MODE_PRIVATE)
+            .getString("model_path", null)
+        val managed = modelManager.byPath(savedPath)
+        if (managed != null && !modelManager.isDownloaded(managed)) {
+            modelManager.clearSelected()
+            updateHeader()
+            return
+        }
+
+        llm.loadSaved { ok, message ->
+            if (!ok && savedPath != null) {
+                Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+            }
+            updateHeader()
         }
     }
 
