@@ -33,6 +33,7 @@ class ScreenAssistController(
     private var messageView: TextView? = null
     private var liveButton: TextView? = null
     private var input: EditText? = null
+    private var sendButton: TextView? = null
     private var busy = false
     private var live = false
     private var lastScreenSignature = ""
@@ -105,22 +106,25 @@ class ScreenAssistController(
         }
         inputRow.addView(input, LinearLayout.LayoutParams(0, -2, 1f))
 
-        val send = TextView(service).apply {
+        sendButton = TextView(service).apply {
             text = "↑"
             textSize = 24f
             setTextColor(Color.BLACK)
             gravity = Gravity.CENTER
             background = rounded(Color.WHITE, 20)
             setOnClickListener {
-                val q = input?.text?.toString()?.trim().orEmpty()
-                if (q.isNotEmpty() && !busy) {
-                    input?.setText("")
-                    hideIme()
-                    ask(q)
+                if (busy) {
+                    cancelOverlayGeneration()
+                } else {
+                    val q = input?.text?.toString()?.trim().orEmpty()
+                    if (q.isNotEmpty()) {
+                        input?.setText("")
+                        ask(q)
+                    }
                 }
             }
         }
-        inputRow.addView(send, LinearLayout.LayoutParams(dp(42), dp(42)).apply {
+        inputRow.addView(sendButton, LinearLayout.LayoutParams(dp(42), dp(42)).apply {
             marginStart = dp(7)
         })
         panel.addView(inputRow, LinearLayout.LayoutParams(-1, -2))
@@ -143,13 +147,6 @@ class ScreenAssistController(
         actions.addView(liveButton, LinearLayout.LayoutParams(0, dp(42), 1f))
 
         actions.addView(action("Переклад") { translateScreen() }, LinearLayout.LayoutParams(0, dp(42), 1f).apply {
-            marginStart = dp(6)
-        })
-        actions.addView(action("Чат") {
-            val i = Intent(service, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            service.startActivity(i)
-        }, LinearLayout.LayoutParams(0, dp(42), 1f).apply {
             marginStart = dp(6)
         })
         actions.addView(action("×") { hide() }, LinearLayout.LayoutParams(dp(44), dp(42)).apply {
@@ -250,6 +247,7 @@ class ScreenAssistController(
 
     fun hide() {
         live = false
+        if (busy) cancelOverlayGeneration()
         hideIme()
         root?.let {
             try { wm.removeView(it) } catch (_: Exception) {}
@@ -257,6 +255,9 @@ class ScreenAssistController(
         root = null
         params = null
         input = null
+        sendButton = null
+        messageView = null
+        liveButton = null
     }
 
     fun onScreenChanged() {
@@ -318,6 +319,8 @@ class ScreenAssistController(
         }
 
         busy = true
+        sendButton?.text = "■"
+        sendButton?.textSize = 16f
         lastAnalyzeAt = System.currentTimeMillis()
         message("●  ●  ●")
         val out = StringBuilder()
@@ -332,6 +335,7 @@ class ScreenAssistController(
             },
             onDone = {
                 busy = false
+                resetSendButton()
                 val full = out.toString().trim()
 
                 val target = Regex("\\[\\[tap:(.+?)]]", RegexOption.IGNORE_CASE)
@@ -348,8 +352,15 @@ class ScreenAssistController(
                     message(if (clean.isBlank()) "Готово." else clean)
                 }
             },
+            onCancelled = {
+                busy = false
+                resetSendButton()
+                val clean = stripDirectives(out.toString())
+                if (clean.isNotBlank()) message(clean) else message("Зупинено.")
+            },
             onError = { error ->
                 busy = false
+                resetSendButton()
                 message(error)
             }
         )
@@ -380,6 +391,17 @@ class ScreenAssistController(
             busy = false
             askModel(prompt, includeScreen = false)
         }
+    }
+
+    private fun cancelOverlayGeneration() {
+        NexusRuntime.engine(service).cancelGeneration()
+        busy = false
+        resetSendButton()
+    }
+
+    private fun resetSendButton() {
+        sendButton?.text = "↑"
+        sendButton?.textSize = 24f
     }
 
     private fun hideIme() {
