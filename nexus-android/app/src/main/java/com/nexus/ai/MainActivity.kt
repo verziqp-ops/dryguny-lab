@@ -161,11 +161,10 @@ class MainActivity : Activity() {
         window.navigationBarColor = Color.TRANSPARENT
         if (Build.VERSION.SDK_INT >= 30) {
             window.setDecorFitsSystemWindows(false)
-            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
             root.setOnApplyWindowInsetsListener { view, insets ->
                 val bars = insets.getInsets(WindowInsets.Type.systemBars())
-                val ime = insets.getInsets(WindowInsets.Type.ime())
-                view.setPadding(0, bars.top, 0, max(bars.bottom, ime.bottom))
+                view.setPadding(0, bars.top, 0, bars.bottom)
                 insets
             }
             root.requestApplyInsets()
@@ -217,27 +216,26 @@ class MainActivity : Activity() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(6), dp(16), dp(6))
+            setPadding(dp(20), dp(4), dp(18), dp(4))
             setBackgroundColor(Color.BLACK)
         }
 
         val menu = iconButton(R.drawable.ic_menu, "Чати").apply {
-            background = rounded(Color.rgb(47, 47, 47), 26)
-            setPadding(dp(13), dp(13), dp(13), dp(13))
+            setPadding(dp(11), dp(11), dp(11), dp(11))
             addPressAnimation(this)
             setOnClickListener { showChatDrawer() }
         }
-        row.addView(menu, LinearLayout.LayoutParams(dp(52), dp(52)))
+        row.addView(menu, LinearLayout.LayoutParams(dp(44), dp(44)))
 
         val titleBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), 0, 0, 0)
+            setPadding(dp(12), 0, 0, 0)
         }
         val title = TextView(this).apply {
             text = "NEXUS"
             setTextColor(Color.WHITE)
-            textSize = 17f
+            textSize = 18f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
         }
         modelStatus = TextView(this).apply {
@@ -250,26 +248,22 @@ class MainActivity : Activity() {
         titleBox.addView(modelStatus)
         row.addView(titleBox, LinearLayout.LayoutParams(0, -1, 1f))
 
-        val actions = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            background = rounded(Color.rgb(47, 47, 47), 28)
-            setPadding(dp(4), dp(2), dp(4), dp(2))
-        }
-
         val newChatButton = iconButton(R.drawable.ic_edit, "Новий чат").apply {
-            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            addPressAnimation(this)
             setOnClickListener { newChat() }
         }
-        actions.addView(newChatButton, LinearLayout.LayoutParams(dp(48), dp(48)))
+        row.addView(newChatButton, LinearLayout.LayoutParams(dp(44), dp(44)))
 
         val more = iconButton(R.drawable.ic_more, "Налаштування").apply {
-            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            addPressAnimation(this)
             setOnClickListener { showSettings() }
         }
-        actions.addView(more, LinearLayout.LayoutParams(dp(48), dp(48)))
+        row.addView(more, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
+            marginStart = dp(4)
+        })
 
-        row.addView(actions, LinearLayout.LayoutParams(dp(104), dp(52)))
         return row
     }
 
@@ -358,56 +352,64 @@ class MainActivity : Activity() {
     private fun buildComposer(): View {
         val wrapper = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(4), dp(16), dp(10))
+            setPadding(dp(16), dp(5), dp(16), dp(10))
             setBackgroundColor(Color.BLACK)
         }
 
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = rounded(Color.rgb(47, 47, 47), 28)
-            setPadding(dp(4), dp(4), dp(4), dp(5))
+            setPadding(dp(4), dp(3), dp(4), dp(4))
         }
 
         input = EditText(this).apply {
             hint = "Повідомлення NEXUS"
-            setHintTextColor(Color.rgb(166, 166, 166))
+            setHintTextColor(Color.rgb(176, 176, 176))
             setTextColor(Color.WHITE)
             textSize = 16f
+            includeFontPadding = false
             minLines = 1
-            maxLines = 8
+            maxLines = 6
             gravity = Gravity.TOP or Gravity.START
             setHorizontallyScrolling(false)
-            isVerticalScrollBarEnabled = true
-            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            isVerticalScrollBarEnabled = false
             inputType =
                 android.text.InputType.TYPE_CLASS_TEXT or
                     android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or
                     android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            setPadding(dp(15), dp(12), dp(15), dp(6))
-            setMinHeight(dp(48))
-            setMaxHeight(dp(196))
+            setPadding(dp(15), dp(12), dp(15), dp(8))
             background = null
+
             addTextChangedListener(object : android.text.TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
                 override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
                 override fun afterTextChanged(s: android.text.Editable?) {
                     post {
+                        val usableWidth = (width - paddingLeft - paddingRight).coerceAtLeast(dp(100))
+                        val layout = android.text.StaticLayout.Builder
+                            .obtain(text ?: "", 0, text?.length ?: 0, paint, usableWidth)
+                            .setIncludePad(false)
+                            .setLineSpacing(0f, 1f)
+                            .build()
+
+                        val lines = layout.lineCount.coerceIn(1, 6)
+                        val desired = dp(22) + (lineHeight * lines) + dp(10)
+                        val newHeight = desired.coerceIn(dp(48), dp(158))
                         val lp = layoutParams
-                        if (lp.height != LinearLayout.LayoutParams.WRAP_CONTENT) {
-                            lp.height = LinearLayout.LayoutParams.WRAP_CONTENT
+                        if (lp != null && lp.height != newHeight) {
+                            lp.height = newHeight
                             layoutParams = lp
+                            requestLayout()
+                            card.requestLayout()
+                            wrapper.requestLayout()
+                            scrollBottom()
                         }
-                        requestLayout()
-                        card.requestLayout()
-                        wrapper.requestLayout()
+                        isVerticalScrollBarEnabled = layout.lineCount > 6
                     }
                 }
             })
         }
-        card.addView(
-            input,
-            LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT)
-        )
+        card.addView(input, LinearLayout.LayoutParams(-1, dp(48)))
 
         val controls = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -443,18 +445,11 @@ class MainActivity : Activity() {
         sendButton = ImageButton(this).apply {
             setImageResource(R.drawable.ic_send)
             contentDescription = "Надіслати"
-            background = GradientDrawable().apply {
-                setColor(Color.WHITE)
-                cornerRadius = dp(22).toFloat()
-            }
+            background = rounded(Color.WHITE, 22)
             setPadding(dp(10), dp(10), dp(10), dp(10))
             addPressAnimation(this)
             setOnClickListener {
-                if (generatingResponse) {
-                    llm.cancelGeneration()
-                } else {
-                    sendCurrent()
-                }
+                if (generatingResponse) llm.cancelGeneration() else sendCurrent()
             }
         }
         controls.addView(sendButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
@@ -1535,38 +1530,32 @@ class MainActivity : Activity() {
         onFinished: ((Boolean, String) -> Unit)? = null
     ) {
         if (!modelManager.isDownloaded(spec)) {
-            loadingModel = false
-            loadingModelId = null
-            val message = "Дочекайся повного завантаження моделі"
-            onFinished?.invoke(false, message)
+            onFinished?.invoke(false, "Дочекайся повного завантаження моделі")
             return
         }
 
         val file = modelManager.modelFile(spec)
         if (!file.exists()) {
-            loadingModel = false
-            loadingModelId = null
             onFinished?.invoke(false, "Файл моделі не знайдено")
             return
         }
 
+        // Selection is a UI/settings operation and must be instant.
         modelManager.setSelected(spec)
         loadingModel = true
         loadingModelId = spec.id
         updateHeader()
+        Toast.makeText(this, spec.label + " вибрана", Toast.LENGTH_SHORT).show()
+        onFinished?.invoke(true, "Вибрано")
 
+        // Heavy LiteRT initialization continues separately.
         llm.loadModel(file.absolutePath) { ok, message ->
             loadingModel = false
             loadingModelId = null
-
-            if (ok) {
-                Toast.makeText(this, spec.label + " активна", Toast.LENGTH_SHORT).show()
-            } else {
-                modelManager.clearSelected()
+            if (!ok) {
+                Toast.makeText(this, "Не вдалося запустити " + spec.label + ": " + message, Toast.LENGTH_LONG).show()
             }
-
             updateHeader()
-            onFinished?.invoke(ok, message)
         }
     }
 
