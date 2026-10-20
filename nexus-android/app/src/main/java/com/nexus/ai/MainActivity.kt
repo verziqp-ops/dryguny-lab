@@ -72,6 +72,9 @@ class MainActivity : Activity() {
     private lateinit var attachmentStrip: LinearLayout
     private lateinit var modelStatus: TextView
     private lateinit var screenButton: ImageButton
+    private lateinit var globalDownloadBar: LinearLayout
+    private lateinit var globalDownloadText: TextView
+    private lateinit var globalDownloadProgress: ProgressBar
 
     private val handler = Handler(Looper.getMainLooper())
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -94,6 +97,7 @@ class MainActivity : Activity() {
     private var pendingCameraUri: Uri? = null
     private var loadingModel = false
     private var loadingModelId: String? = null
+    private var downloadTickerStarted = false
 
     private val prefs by lazy { getSharedPreferences("nexus_settings", MODE_PRIVATE) }
 
@@ -121,6 +125,7 @@ class MainActivity : Activity() {
         handleIncomingIntent(intent)
         initTts()
         loadSelectedModel()
+        startGlobalDownloadTicker()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -144,6 +149,7 @@ class MainActivity : Activity() {
         tts?.stop()
         tts?.shutdown()
         tts = null
+        handler.removeCallbacksAndMessages(null)
         llm.close()
         super.onDestroy()
     }
@@ -202,6 +208,8 @@ class MainActivity : Activity() {
         attachmentScroll.addView(attachmentStrip, FrameLayout.LayoutParams(-2, dp(42)))
         outer.addView(attachmentScroll, LinearLayout.LayoutParams(-1, dp(48)))
 
+        outer.addView(buildGlobalDownloadBar(), LinearLayout.LayoutParams(-1, dp(46)))
+
         outer.addView(buildComposer(), LinearLayout.LayoutParams(-1, dp(72)))
         return outer
     }
@@ -251,6 +259,94 @@ class MainActivity : Activity() {
         settings.setOnClickListener { showSettings() }
         row.addView(settings, LinearLayout.LayoutParams(dp(48), dp(48)))
         return row
+    }
+
+    private fun buildGlobalDownloadBar(): View {
+        globalDownloadBar = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(6), dp(16), dp(7))
+            background = glassDrawable(18, 34, 46)
+            visibility = View.GONE
+        }
+        globalDownloadText = TextView(this).apply {
+            setTextColor(Color.rgb(226, 230, 236))
+            textSize = 11f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        globalDownloadProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+            progressTintList = ColorStateList.valueOf(Color.WHITE)
+            progressBackgroundTintList = ColorStateList.valueOf(Color.argb(44, 255, 255, 255))
+        }
+        globalDownloadBar.addView(globalDownloadText, LinearLayout.LayoutParams(-1, dp(20)))
+        globalDownloadBar.addView(globalDownloadProgress, LinearLayout.LayoutParams(-1, dp(4)))
+        return globalDownloadBar
+    }
+
+    private fun startGlobalDownloadTicker() {
+        if (downloadTickerStarted) return
+        downloadTickerStarted = true
+
+        fun tick() {
+            if (isFinishing || isDestroyed) return
+
+            val running = modelManager.models.mapNotNull { spec ->
+                val state = modelManager.query(spec) ?: return@mapNotNull null
+                if (state.status == DownloadManager.STATUS_RUNNING ||
+                    state.status == DownloadManager.STATUS_PENDING
+                ) spec to state else null
+            }
+
+            when {
+                loadingModelId != null -> {
+                    globalDownloadBar.visibility = View.VISIBLE
+                    globalDownloadProgress.isIndeterminate = true
+                    val spec = modelManager.models.firstOrNull { it.id == loadingModelId }
+                    globalDownloadText.text = "Запускаю " + (spec?.label ?: "модель") + "…"
+                }
+                running.isNotEmpty() -> {
+                    val pair = running.first()
+                    val spec = pair.first
+                    val state = pair.second
+                    val pct =
+                        if (state.total > 0L)
+                            ((state.downloaded * 100L) / state.total).toInt().coerceIn(0, 100)
+                        else null
+
+                    globalDownloadBar.visibility = View.VISIBLE
+                    globalDownloadProgress.isIndeterminate = pct == null
+                    if (pct != null) globalDownloadProgress.progress = pct
+                    globalDownloadText.text =
+                        if (pct != null) spec.label + " · " + pct + "%"
+                        else spec.label + " · завантаження…"
+                }
+                else -> {
+                    globalDownloadBar.visibility = View.GONE
+                    globalDownloadProgress.isIndeterminate = false
+                }
+            }
+
+            val pendingId = modelManager.pendingActivationId()
+            if (pendingId != null && !loadingModel) {
+                val spec = modelManager.models.firstOrNull { it.id == pendingId }
+                if (spec != null && modelManager.isDownloaded(spec)) {
+                    modelManager.clearPendingActivation()
+                    loadingModel = true
+                    loadingModelId = spec.id
+                    updateHeader()
+                    useModel(spec) { ok, message ->
+                        if (!ok) {
+                            Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+            }
+
+            handler.postDelayed({ tick() }, 500)
+        }
+
+        tick()
     }
 
     private fun buildComposer(): View {
