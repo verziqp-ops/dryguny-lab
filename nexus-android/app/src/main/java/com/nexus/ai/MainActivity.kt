@@ -1703,14 +1703,35 @@ class MainActivity : Activity() {
             addAssistant("Аналіз екрана вимкнений у функціях NEXUS.")
             return
         }
-        if (!ScreenCaptureService.isRunning) {
-            pendingScreenAttachment = true
-            startActivity(Intent(this, CapturePermissionActivity::class.java))
-        } else {
-            pendingScreenAttachment = true
-            ScreenCaptureService.requestFreshCapture()
-            handler.postDelayed({ attachLatestScreen() }, 600)
+
+        fun startCapture() {
+            if (!ScreenCaptureService.isRunning) {
+                pendingScreenAttachment = true
+                startActivity(Intent(this, CapturePermissionActivity::class.java))
+            } else {
+                pendingScreenAttachment = true
+                ScreenCaptureService.requestFreshCapture()
+                NexusAccessibilityService.get()?.showAssistantOverlay()
+                handler.postDelayed({ attachLatestScreen() }, 600)
+            }
         }
+
+        if (!NexusAccessibilityService.isEnabled()) {
+            AlertDialog.Builder(this)
+                .setTitle("Плаваючий Screen Assist")
+                .setMessage(
+                    "Щоб NEXUS показував плаваючу панель, підсвічував кнопки й читав елементи екрана, " +
+                        "увімкни NEXUS Screen Control у Спецможливостях. Саме захоплення екрана може працювати і без цього."
+                )
+                .setPositiveButton("Увімкнути") { _, _ ->
+                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                }
+                .setNegativeButton("Лише захоплення") { _, _ -> startCapture() }
+                .show()
+            return
+        }
+
+        startCapture()
     }
 
     private fun attachLatestScreen() {
