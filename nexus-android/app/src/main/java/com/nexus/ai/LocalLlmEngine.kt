@@ -288,6 +288,8 @@ class LocalLlmEngine(private val context: Context) {
             languageRule + " " +
             "Be concise and useful. " +
             style + " " +
+            "Answer the actual latest request directly. Never invent permissions, device state, features, or actions you did not receive from the app. " +
+            "For capability questions, describe only real NEXUS capabilities from the provided context; do not produce placeholder lists or repetitive filler. " +
             "Keep conversational continuity using the provided chat history, but treat the latest user message as the current task. " +
             "If the user changes subject, answer the new subject normally and never repeat an earlier refusal just because it appeared in history. " +
             "Do not confuse benign programming requests such as ordinary games, utilities, or simulations with attacks. " +
@@ -431,6 +433,86 @@ class LocalLlmEngine(private val context: Context) {
                     isGenerating = false
                     main.post { onError(friendlyError(e)) }
                 }
+            }
+        }
+    }
+
+    fun sendStateless(
+        prompt: String,
+        attachments: List<NexusAttachment> = emptyList(),
+        onChunk: (String) -> Unit,
+        onDone: () -> Unit,
+        onError: (String) -> Unit,
+    ) {
+        val activeEngine = engine
+        if (!isLoaded || activeEngine == null) {
+            onError("Модель ще не готова.")
+            return
+        }
+        if (isGenerating) {
+            onError("NEXUS зараз відповідає в чаті.")
+            return
+        }
+
+        scope.launch {
+            var temp: Conversation? = null
+            try {
+                temp = activeEngine.createConversation(
+                    ConversationConfig(
+                        systemInstruction = Contents.of(Content.Text(systemInstruction())),
+                        maxOutputToken = 220,
+                        thinkingConfig =
+                            if (supportsThinkingModel)
+                                ThinkingConfig(enableThinking = true, thinkingTokenBudget = 64)
+                            else null,
+                        enableSpeculativeDecoding = false,
+                    )
+                )
+
+                val parts = mutableListOf<Content>(Content.Text(prompt))
+                if (mediaPipelineEnabled) {
+                    attachments.forEach { a ->
+                        when (a.kind) {
+                            AttachmentKind.IMAGE, AttachmentKind.SCREEN -> parts += Content.ImageFile(a.path)
+                            AttachmentKind.VIDEO -> a.derivedImagePath?.let { parts += Content.ImageFile(it) }
+                            else -> Unit
+                        }
+                    }
+                }
+
+                val conv = temp
+                conv.sendMessageAsync(
+                    Contents.of(parts),
+                    object : MessageCallback {
+                        override fun onMessage(message: Message) {
+                            val token = message.toString()
+                            if (token.isNotEmpty()) main.post { onChunk(token) }
+                        }
+
+                        override fun onDone() {
+                            try { conv.close() } catch (_: Throwable) {}
+                            main.post { onDone() }
+                        }
+
+                        override fun onError(throwable: Throwable) {
+                            try { conv.close() } catch (_: Throwable) {}
+                            main.post { onError(friendlyError(throwable)) }
+                        }
+                    },
+                    repetitionPenaltyConfig = RepetitionPenaltyConfig(
+                        repetitionPenalty = 1.08f,
+                        presencePenalty = 0.05f,
+                        frequencyPenalty = 0.05f,
+                        windowSize = 192,
+                    ),
+                    noRepeatNgramConfig = NoRepeatNgramConfig(
+                        noRepeatNgramSize = 4,
+                        windowSize = 192,
+                    ),
+                )
+            } catch (e: Throwable) {
+                try { temp?.close() } catch (_: Throwable) {}
+                main.post { onError(friendlyError(e)) }
             }
         }
     }
