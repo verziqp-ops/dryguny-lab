@@ -443,11 +443,29 @@ class ScreenAssistController(
     }
 
     private fun cancelOverlayGeneration() {
-        val cancelled = NexusRuntime.engine(service).cancelGeneration("screen")
+        val engine = NexusRuntime.engine(service)
+        val cancelled = engine.cancelGeneration("screen")
+
         if (!cancelled) {
             busy = false
             resetSendButton()
+            return
         }
+
+        // Native LiteRT cancellation should callback quickly, but never leave
+        // the floating UI locked if that callback is missed.
+        handler.postDelayed({
+            if (busy && engine.generationOwner != "screen") {
+                busy = false
+                resetSendButton()
+
+                val next = pendingQuestion
+                pendingQuestion = null
+                if (!next.isNullOrBlank() && root != null) {
+                    ask(next)
+                }
+            }
+        }, 1950)
     }
 
     private fun resetSendButton() {
