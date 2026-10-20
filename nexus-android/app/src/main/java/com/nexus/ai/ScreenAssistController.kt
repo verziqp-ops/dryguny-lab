@@ -171,6 +171,23 @@ class ScreenAssistController(
         }
     }
 
+    fun ask(question: String) {
+        show()
+        val visible = service.screenText().take(6000)
+        val prompt = buildString {
+            append("Користувач зараз показує екран і питає: ")
+            append(question)
+            append("\n\nВідповідай українською в Screen Assist. ")
+            append("Враховуй помилки в написанні й відновлюй найімовірніший зміст. ")
+            append("Якщо треба натиснути видимий елемент, додай [[tap:ТОЧНИЙ ТЕКСТ ЕЛЕМЕНТА]].\n\n")
+            if (visible.isNotBlank()) {
+                append("Текст поточного екрана:\n")
+                append(visible)
+            }
+        }
+        askModel(prompt, includeScreen = true)
+    }
+
     fun hide() {
         live = false
         root?.let {
