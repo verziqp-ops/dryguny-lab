@@ -40,6 +40,9 @@ class LocalLlmEngine(private val context: Context) {
     @Volatile var isGenerating: Boolean = false
         private set
 
+    @Volatile var generationOwner: String? = null
+        private set
+
     @Volatile private var cancelRequested: Boolean = false
 
     @Volatile var isLoaded: Boolean = false
@@ -359,6 +362,7 @@ class LocalLlmEngine(private val context: Context) {
             val finished = AtomicBoolean(false)
             cancelRequested = false
             isGenerating = true
+            generationOwner = "chat"
 
             try {
                 if (historyBeforePrompt.isNotEmpty()) {
@@ -370,9 +374,12 @@ class LocalLlmEngine(private val context: Context) {
                 val conv = conversation
                 if (conv == null) {
                     isGenerating = false
+                    generationOwner = null
+                    activeGenerationConversation = null
                     main.post { onError("Модель ще не готова.") }
                     return@launch
                 }
+                activeGenerationConversation = conv
 
                 val contents = mutableListOf<Content>()
                 contents += Content.Text(languageHint(prompt) + prompt)
@@ -391,6 +398,8 @@ class LocalLlmEngine(private val context: Context) {
                 fun finishCancelled() {
                     if (!finished.compareAndSet(false, true)) return
                     isGenerating = false
+                    generationOwner = null
+                    activeGenerationConversation = null
 
                     historySnapshot += StoredMessage("user", prompt)
                     if (generated.isNotBlank()) {
@@ -410,6 +419,8 @@ class LocalLlmEngine(private val context: Context) {
                 fun finishNormally() {
                     if (!finished.compareAndSet(false, true)) return
                     isGenerating = false
+                    generationOwner = null
+                    activeGenerationConversation = null
 
                     historySnapshot += StoredMessage("user", prompt)
                     if (generated.isNotBlank()) {
@@ -441,6 +452,8 @@ class LocalLlmEngine(private val context: Context) {
                                 finishCancelled()
                             } else if (finished.compareAndSet(false, true)) {
                                 isGenerating = false
+                                generationOwner = null
+                                activeGenerationConversation = null
                                 main.post { onError(friendlyError(throwable)) }
                             }
                         }
@@ -459,9 +472,13 @@ class LocalLlmEngine(private val context: Context) {
             } catch (e: Throwable) {
                 if (cancelRequested) {
                     isGenerating = false
+                    generationOwner = null
+                    activeGenerationConversation = null
                     main.post { onCancelled() }
                 } else {
                     isGenerating = false
+                    generationOwner = null
+                    activeGenerationConversation = null
                     main.post { onError(friendlyError(e)) }
                 }
             }
@@ -487,6 +504,7 @@ class LocalLlmEngine(private val context: Context) {
         }
 
         isGenerating = true
+        generationOwner = "screen"
         cancelRequested = false
         scope.launch {
             var temp: Conversation? = null
@@ -528,6 +546,7 @@ class LocalLlmEngine(private val context: Context) {
                         override fun onDone() {
                             if (!finished.compareAndSet(false, true)) return
                             isGenerating = false
+                            generationOwner = null
                             activeGenerationConversation = null
                             try { conv.close() } catch (_: Throwable) {}
                             if (cancelRequested) main.post { onCancelled() } else main.post { onDone() }
@@ -536,6 +555,7 @@ class LocalLlmEngine(private val context: Context) {
                         override fun onError(throwable: Throwable) {
                             if (!finished.compareAndSet(false, true)) return
                             isGenerating = false
+                            generationOwner = null
                             activeGenerationConversation = null
                             try { conv.close() } catch (_: Throwable) {}
                             if (cancelRequested || throwable.message.orEmpty().contains("cancel", ignoreCase = true)) {
@@ -559,6 +579,7 @@ class LocalLlmEngine(private val context: Context) {
             } catch (e: Throwable) {
                 if (finished.compareAndSet(false, true)) {
                     isGenerating = false
+                    generationOwner = null
                     activeGenerationConversation = null
                     try { temp?.close() } catch (_: Throwable) {}
                     if (cancelRequested) main.post { onCancelled() }
@@ -568,11 +589,27 @@ class LocalLlmEngine(private val context: Context) {
         }
     }
 
-    fun cancelGeneration() {
-        if (!isGenerating) return
+    fun cancelGeneration(owner: String? = null): Boolean {
+        if (!isGenerating) return false
+        if (owner != null && generationOwner != owner) return false
+
         cancelRequested = true
         try { activeGenerationConversation?.cancelProcess() } catch (_: Throwable) {}
-        try { conversation?.cancelProcess() } catch (_: Throwable) {}
+        try {
+            if (activeGenerationConversation == null) conversation?.cancelProcess()
+        } catch (_: Throwable) {}
+
+        // Failsafe against a native callback never returning after cancel.
+        main.postDelayed({
+            if (isGenerating && (owner == null || generationOwner == owner)) {
+                isGenerating = false
+                generationOwner = null
+                activeGenerationConversation = null
+                cancelRequested = false
+            }
+        }, 1800)
+
+        return true
     }
 
     private fun languageHint(text: String): String {
@@ -622,6 +659,7 @@ class LocalLlmEngine(private val context: Context) {
         mediaPipelineEnabled = false
         supportsThinkingModel = false
         isGenerating = false
+        generationOwner = null
         cancelRequested = false
     }
 
