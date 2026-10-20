@@ -82,6 +82,9 @@ class ScreenAssistController(
             elevation = dp(10).toFloat()
         }
 
+        lateinit var inputRow: LinearLayout
+        lateinit var actions: LinearLayout
+
         val headerRow = LinearLayout(service).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -120,7 +123,7 @@ class ScreenAssistController(
 
         panel.addView(headerRow, LinearLayout.LayoutParams(-1, dp(30)))
 
-        val inputRow = LinearLayout(service).apply {
+        inputRow = LinearLayout(service).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.BOTTOM
             setPadding(0, 0, 0, dp(7))
@@ -182,7 +185,7 @@ class ScreenAssistController(
         })
         panel.addView(inputRow, LinearLayout.LayoutParams(-1, -2))
 
-        val actions = LinearLayout(service).apply {
+        actions = LinearLayout(service).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
@@ -525,11 +528,7 @@ class ScreenAssistController(
     }
 
     private fun startVoiceInput() {
-        if (androidx.core.content.ContextCompat.checkSelfPermission(
-                service,
-                Manifest.permission.RECORD_AUDIO
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
+        if (service.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             message("Дозволь мікрофон у NEXUS, тоді голос працюватиме тут.")
             return
         }
