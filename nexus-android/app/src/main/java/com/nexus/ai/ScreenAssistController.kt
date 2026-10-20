@@ -38,37 +38,50 @@ class ScreenAssistController(
     fun show() {
         if (root != null) return
 
+        val container = LinearLayout(service).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, 0)
+            background = null
+        }
+
+        messageView = TextView(service).apply {
+            text = "Бачу екран."
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            maxLines = 5
+            setPadding(dp(14), dp(11), dp(14), dp(11))
+            background = rounded(Color.rgb(38, 38, 38), 22)
+            elevation = dp(8).toFloat()
+        }
+        container.addView(
+            messageView,
+            LinearLayout.LayoutParams(-1, -2).apply {
+                leftMargin = dp(8)
+                rightMargin = dp(8)
+                bottomMargin = dp(8)
+            }
+        )
+
         val panel = LinearLayout(service).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(8), dp(12), dp(10))
-            background = rounded(Color.rgb(39, 39, 39), 24)
+            setPadding(dp(10), dp(6), dp(10), dp(8))
+            background = rounded(Color.rgb(30, 30, 30), 24)
             elevation = dp(10).toFloat()
         }
 
         val drag = TextView(service).apply {
             text = "NEXUS  ·  Screen Assist"
-            setTextColor(Color.WHITE)
-            textSize = 13f
+            setTextColor(Color.rgb(205, 205, 205))
+            textSize = 12f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), dp(4), dp(8), dp(7))
+            setPadding(dp(8), dp(3), dp(8), dp(5))
         }
-        panel.addView(drag, LinearLayout.LayoutParams(-1, dp(34)))
-
-        messageView = TextView(service).apply {
-            text = "Бачу екран. Натисни AI, Переклад або Google."
-            setTextColor(Color.rgb(238, 238, 238))
-            textSize = 14f
-            maxLines = 4
-            setPadding(dp(10), dp(8), dp(10), dp(10))
-            background = rounded(Color.rgb(24, 24, 24), 18)
-        }
-        panel.addView(messageView, LinearLayout.LayoutParams(-1, -2))
+        panel.addView(drag, LinearLayout.LayoutParams(-1, dp(30)))
 
         val actions = LinearLayout(service).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(8), 0, 0)
         }
 
         liveButton = action("AI") {
@@ -101,10 +114,12 @@ class ScreenAssistController(
         })
 
         panel.addView(actions, LinearLayout.LayoutParams(-1, -2))
+        container.addView(panel, LinearLayout.LayoutParams(-1, -2))
 
         val bounds = wm.currentWindowMetrics.bounds
+        val width = max(dp(280), bounds.width() - dp(24))
         val p = WindowManager.LayoutParams(
-            max(dp(260), bounds.width() - dp(24)),
+            width,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -114,7 +129,7 @@ class ScreenAssistController(
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = dp(12)
-            y = max(dp(60), bounds.height() - dp(240))
+            y = max(dp(60), bounds.height() - dp(260))
         }
 
         var downX = 0f
@@ -134,22 +149,22 @@ class ScreenAssistController(
                     val nx = startX + (event.rawX - downX).toInt()
                     val ny = startY + (event.rawY - downY).toInt()
                     val b = wm.currentWindowMetrics.bounds
-                    p.x = nx.coerceIn(0, max(0, b.width() - p.width))
+                    p.x = nx.coerceIn(0, max(0, b.width() - width))
                     p.y = ny.coerceIn(0, max(0, b.height() - dp(120)))
-                    try { wm.updateViewLayout(panel, p) } catch (_: Exception) {}
+                    try { wm.updateViewLayout(container, p) } catch (_: Exception) {}
                     true
                 }
                 else -> true
             }
         }
 
-        root = panel
+        root = container
         params = p
         try {
-            wm.addView(panel, p)
-            panel.alpha = 0f
-            panel.translationY = dp(24).toFloat()
-            panel.animate().alpha(1f).translationY(0f).setDuration(180).start()
+            wm.addView(container, p)
+            container.alpha = 0f
+            container.translationY = dp(24).toFloat()
+            container.animate().alpha(1f).translationY(0f).setDuration(180).start()
         } catch (_: Exception) {
             root = null
             params = null
