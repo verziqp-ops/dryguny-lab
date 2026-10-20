@@ -217,28 +217,32 @@ class MainActivity : Activity() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), dp(4), dp(8), dp(4))
+            setPadding(dp(16), dp(6), dp(16), dp(6))
             setBackgroundColor(Color.BLACK)
         }
 
-        val menu = iconButton(R.drawable.ic_menu, "Чати")
-        menu.setOnClickListener { showChatDrawer() }
-        row.addView(menu, LinearLayout.LayoutParams(dp(50), dp(50)))
+        val menu = iconButton(R.drawable.ic_menu, "Чати").apply {
+            background = rounded(Color.rgb(47, 47, 47), 26)
+            setPadding(dp(13), dp(13), dp(13), dp(13))
+            addPressAnimation(this)
+            setOnClickListener { showChatDrawer() }
+        }
+        row.addView(menu, LinearLayout.LayoutParams(dp(52), dp(52)))
 
         val titleBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(4), 0, 0, 0)
+            setPadding(dp(14), 0, 0, 0)
         }
         val title = TextView(this).apply {
             text = "NEXUS"
             setTextColor(Color.WHITE)
-            textSize = 18f
+            textSize = 17f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
         }
         modelStatus = TextView(this).apply {
             text = "OFFLINE"
-            setTextColor(Color.rgb(145, 145, 145))
+            setTextColor(Color.rgb(155, 155, 155))
             textSize = 11f
             setOnClickListener { showModelManager() }
         }
@@ -246,17 +250,26 @@ class MainActivity : Activity() {
         titleBox.addView(modelStatus)
         row.addView(titleBox, LinearLayout.LayoutParams(0, -1, 1f))
 
-        screenButton = iconButton(R.drawable.ic_screen, "Захоплення екрана")
-        screenButton.setOnClickListener { onScreenButton() }
-        row.addView(screenButton, LinearLayout.LayoutParams(dp(48), dp(48)))
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            background = rounded(Color.rgb(47, 47, 47), 28)
+            setPadding(dp(4), dp(2), dp(4), dp(2))
+        }
 
-        val model = iconButton(R.drawable.ic_model, "Моделі")
-        model.setOnClickListener { showModelManager() }
-        row.addView(model, LinearLayout.LayoutParams(dp(48), dp(48)))
+        val newChatButton = iconButton(R.drawable.ic_edit, "Новий чат").apply {
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setOnClickListener { newChat() }
+        }
+        actions.addView(newChatButton, LinearLayout.LayoutParams(dp(48), dp(48)))
 
-        val settings = iconButton(R.drawable.ic_settings, "Налаштування")
-        settings.setOnClickListener { showSettings() }
-        row.addView(settings, LinearLayout.LayoutParams(dp(48), dp(48)))
+        val more = iconButton(R.drawable.ic_more, "Налаштування").apply {
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setOnClickListener { showSettings() }
+        }
+        actions.addView(more, LinearLayout.LayoutParams(dp(48), dp(48)))
+
+        row.addView(actions, LinearLayout.LayoutParams(dp(104), dp(52)))
         return row
     }
 
