@@ -156,19 +156,14 @@ class MainActivity : Activity() {
     }
 
     private fun configureInsets() {
-        window.statusBarColor = Color.TRANSPARENT
-        window.navigationBarColor = Color.TRANSPARENT
+        window.statusBarColor = Color.BLACK
+        window.navigationBarColor = Color.BLACK
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+
         if (Build.VERSION.SDK_INT >= 30) {
-            window.setDecorFitsSystemWindows(false)
-            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-            root.setOnApplyWindowInsetsListener { view, insets ->
-                val bars = insets.getInsets(WindowInsets.Type.systemBars())
-                view.setPadding(0, bars.top, 0, bars.bottom)
-                insets
-            }
-            root.requestApplyInsets()
-        } else {
-            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            // Let Android resize the activity for the IME instead of drawing the keyboard over the composer.
+            window.setDecorFitsSystemWindows(true)
+            root.setOnApplyWindowInsetsListener(null)
         }
     }
 
@@ -1074,11 +1069,17 @@ class MainActivity : Activity() {
     }
 
     private fun looksLikeExplicitAction(s: String): Boolean {
-        val starts = listOf(
-            "відкрий ", "відкрий", "зайди ", "натисни ", "нажми ", "прокрути ",
-            "повернись назад", "назад", "додому", "головний екран", "знайди на екрані "
-        )
-        return starts.any { s.startsWith(it) } || s.contains(" і потім ")
+        val normalized = normalizeMatchText(s)
+        val first = normalized.substringBefore(' ')
+        val actionWords = listOf("відкрий", "зайди", "натисни", "нажми", "прокрути", "знайди")
+        val fuzzyAction = actionWords.any { editDistance(first, it) <= 2 }
+
+        return fuzzyAction ||
+            normalized.contains("повернись назад") ||
+            normalized == "назад" ||
+            normalized.contains("додому") ||
+            normalized.contains("головний екран") ||
+            normalized.contains(" і потім ")
     }
 
     private fun confirmDeviceAction(command: String) {
@@ -1110,15 +1111,94 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun simpleSettingsIntent(s: String): String? = when {
-        s.contains("пам'ять телефона") || s.contains("пам’ять телефона") || s.contains("сховище") -> Settings.ACTION_INTERNAL_STORAGE_SETTINGS
-        s.contains("wifi") || s.contains("wi-fi") || s.contains("вайфай") -> Settings.ACTION_WIFI_SETTINGS
-        s.contains("bluetooth") || s.contains("блютуз") -> Settings.ACTION_BLUETOOTH_SETTINGS
-        s.contains("батаре") -> Settings.ACTION_BATTERY_SAVER_SETTINGS
-        s.contains("яскрав") || s.contains("налаштування екрана") -> Settings.ACTION_DISPLAY_SETTINGS
-        s.contains("додатк") -> Settings.ACTION_APPLICATION_SETTINGS
-        s.contains("налаштуван") -> Settings.ACTION_SETTINGS
-        else -> null
+    private fun simpleSettingsIntent(s: String): String? {
+        val n = normalizeMatchText(s)
+        return when {
+            fuzzyContainsWord(n, "інтернет", 2) ||
+                fuzzyContainsWord(n, "мережа", 2) ||
+                n.contains("network") -> Settings.ACTION_WIRELESS_SETTINGS
+
+            n.contains("память телефона") ||
+                n.contains("сховище") ||
+                fuzzyContainsWord(n, "память", 2) -> Settings.ACTION_INTERNAL_STORAGE_SETTINGS
+
+            n.contains("wifi") || n.contains("wi fi") ||
+                fuzzyContainsWord(n, "вайфай", 2) -> Settings.ACTION_WIFI_SETTINGS
+
+            n.contains("bluetooth") || fuzzyContainsWord(n, "блютуз", 2) ->
+                Settings.ACTION_BLUETOOTH_SETTINGS
+
+            fuzzyContainsWord(n, "батарея", 2) || n.contains("акумулятор") ->
+                Settings.ACTION_BATTERY_SAVER_SETTINGS
+
+            fuzzyContainsWord(n, "яскравість", 3) || n.contains("екрана") ->
+                Settings.ACTION_DISPLAY_SETTINGS
+
+            fuzzyContainsWord(n, "додатки", 2) || n.contains("програми") ->
+                Settings.ACTION_APPLICATION_SETTINGS
+
+            fuzzyContainsWord(n, "налаштування", 4) ->
+                Settings.ACTION_SETTINGS
+
+            else -> null
+        }
+    }
+
+    private fun normalizeMatchText(value: String): String =
+        value.lowercase(Locale.ROOT)
+            .replace('’', '\'')
+            .replace('ʼ', '\'')
+            .replace(Regex("[^а-яіїєґa-z0-9' ]+"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+    private fun fuzzyContainsWord(text: String, target: String, maxDistance: Int): Boolean {
+        val normalizedTarget = normalizeMatchText(target)
+        return normalizeMatchText(text)
+            .split(' ')
+            .filter { it.isNotBlank() }
+            .any { word ->
+                word == normalizedTarget ||
+                    word.startsWith(normalizedTarget) ||
+                    normalizedTarget.startsWith(word) && normalizedTarget.length - word.length <= 2 ||
+                    editDistance(word, normalizedTarget) <= maxDistance
+            }
+    }
+
+    private fun editDistance(a: String, b: String): Int {
+        if (a == b) return 0
+        if (a.isEmpty()) return b.length
+        if (b.isEmpty()) return a.length
+
+        var previous = IntArray(b.length + 1) { it }
+        var current = IntArray(b.length + 1)
+
+        for (i in a.indices) {
+            current[0] = i + 1
+            for (j in b.indices) {
+                val cost = if (a[i] == b[j]) 0 else 1
+                current[j + 1] = minOf(
+                    current[j] + 1,
+                    previous[j + 1] + 1,
+                    previous[j] + cost
+                )
+            }
+            val swap = previous
+            previous = current
+            current = swap
+        }
+        return previous[b.length]
+    }
+
+    private fun isExpandRequest(text: String): Boolean {
+        val n = normalizeMatchText(text)
+        return listOf(
+            "детальніше", "детальніше", "розгорнуто", "більше деталей",
+            "поясни більше", "розпиши", "продовж", "докладніше"
+        ).any { phrase ->
+            n.contains(normalizeMatchText(phrase)) ||
+                (phrase.length < 14 && fuzzyContainsWord(n, phrase, 2))
+        }
     }
 
     private fun sendToLocalAi(prompt: String, sentAttachments: List<NexusAttachment>) {
@@ -1189,8 +1269,16 @@ class MainActivity : Activity() {
             scrollBottom()
         }
 
+        val modelPrompt =
+            if (isExpandRequest(prompt)) {
+                "[The user is explicitly asking you to EXPAND the previous answer. Add substantially more detail, explanation, steps, examples, and useful context. Do not merely repeat the previous wording.]\n" +
+                    prompt + fileContext
+            } else {
+                prompt + fileContext
+            }
+
         llm.send(
-            prompt + fileContext,
+            modelPrompt,
             sentAttachments,
             historyBeforePrompt = historyBeforePrompt,
             onChunk = { chunk ->
