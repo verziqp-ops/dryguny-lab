@@ -108,7 +108,7 @@ class MainActivity : Activity() {
 
         attachmentManager = AttachmentManager(this)
         fileIndex = LocalFileIndex(this)
-        llm = LocalLlmEngine(this)
+        llm = NexusRuntime.engine(this)
         modelManager = ModelManager(this)
         modelManager.validateExistingDownloads()
         conversationStore = ConversationStore(this)
@@ -152,7 +152,6 @@ class MainActivity : Activity() {
         tts?.shutdown()
         tts = null
         handler.removeCallbacksAndMessages(null)
-        llm.close()
         super.onDestroy()
     }
 
