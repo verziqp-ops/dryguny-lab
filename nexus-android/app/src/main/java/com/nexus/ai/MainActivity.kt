@@ -104,6 +104,7 @@ class MainActivity : Activity() {
         chats = conversationStore.migrateLegacyIfNeeded()
         val wanted = conversationStore.activeId()
         activeChat = chats.firstOrNull { it.id == wanted } ?: chats.first()
+        cleanLegacyNoise()
 
         root = buildUi()
         setContentView(root)
@@ -283,6 +284,33 @@ class MainActivity : Activity() {
         send.setOnClickListener { sendCurrent() }
         outer.addView(send, LinearLayout.LayoutParams(dp(46), dp(46)))
         return outer
+    }
+
+    private fun cleanLegacyNoise() {
+        if (prefs.getBoolean("cleanup_041", false)) return
+
+        val noisyFragments = listOf(
+            "Повна локальна модель ще не вибрана",
+            "Локальна модель готова.",
+            "Локальна модель готова",
+            "Обери й завантаж локальну модель",
+            "Помилка локальної моделі: Status Code:",
+            "Натисни кнопку моделі у верхній панелі"
+        )
+
+        var changed = false
+        chats.forEach { chat ->
+            val before = chat.messages.size
+            chat.messages.removeAll { message ->
+                message.role == "assistant" && noisyFragments.any { fragment ->
+                    message.text.contains(fragment, ignoreCase = true)
+                }
+            }
+            if (chat.messages.size != before) changed = true
+        }
+
+        if (changed) conversationStore.save(chats)
+        prefs.edit().putBoolean("cleanup_041", true).apply()
     }
 
     private fun renderActiveChat() {
@@ -859,7 +887,7 @@ class MainActivity : Activity() {
                 scrollBottom()
             },
             onError = { error ->
-                val finalText = "Помилка локальної моделі: $error"
+                val finalText = error
                 assistantView.text = finalText
                 activeChat.messages += StoredMessage("assistant", finalText)
                 saveChats()
@@ -923,6 +951,10 @@ class MainActivity : Activity() {
 
                 val downloaded = modelManager.isDownloaded(spec)
                 val selected = modelManager.selectedId() == spec.id
+                if (downloaded && modelManager.pendingActivationId() == spec.id && !loadingModel) {
+                    modelManager.clearPendingActivation()
+                    content.post { useModel(spec, dialog) }
+                }
                 val state = modelManager.query(spec)
                 val running = !downloaded && state != null &&
                     (state.status == DownloadManager.STATUS_RUNNING || state.status == DownloadManager.STATUS_PENDING)
@@ -1019,9 +1051,13 @@ class MainActivity : Activity() {
         updateHeader()
         llm.loadModel(file.absolutePath) { ok, message ->
             loadingModel = false
-            if (ok) modelManager.setSelected(spec)
+            if (ok) {
+                modelManager.setSelected(spec)
+                Toast.makeText(this, spec.label + " активна", Toast.LENGTH_SHORT).show()
+            } else {
+                addAssistant(message)
+            }
             updateHeader()
-            addAssistant(message)
             if (ok) dialog?.dismiss()
         }
     }
@@ -1033,10 +1069,11 @@ class MainActivity : Activity() {
             try {
                 val file = attachmentManager.importModel(uri)
                 withContext(Dispatchers.Main) {
-                    llm.loadModel(file.absolutePath) { _, message ->
+                    llm.loadModel(file.absolutePath) { ok, message ->
                         loadingModel = false
                         updateHeader()
-                        addAssistant(message)
+                        if (ok) Toast.makeText(this, "Модель активна", Toast.LENGTH_SHORT).show()
+                        else addAssistant(message)
                     }
                 }
             } catch (_: Exception) {
